@@ -34,6 +34,9 @@ export const POINTS = {
   brysonCity:     [35.4279, -83.4470],
   nc28Stecoah:    [35.4338, -83.8137],
   dealsGap:       [35.4661, -83.9220],
+  // 561 Deals Gap Rd, Robbinsville NC 28771 — the group's rented base camp
+  // (US Census geocoder match, overlooks Cheoah Lake ~0.5 mi from the junction)
+  baseCamp:       [35.46879, -83.91759],
   // return-fast pins (US-129 N → I-40 → I-81 → I-64)
   chilhowee:      [35.5560, -84.0210],
   maryville:      [35.7565, -83.9705],
@@ -64,6 +67,7 @@ export const CLOSURES = [
 export const ADVISORIES = [];
 
 export const RETURN_FAST_ANCHORS = [
+  { name: 'Base camp — 561 Deals Gap Rd', key: 'baseCamp' },
   { name: 'Deals Gap',       key: 'dealsGap' },
   { name: 'Maryville',       key: 'maryville' },
   { name: 'Knoxville',       key: 'knoxville' },

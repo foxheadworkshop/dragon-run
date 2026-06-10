@@ -3,7 +3,7 @@
 import { minToTime } from './engine.js';
 import { mileToBrpMp } from './route.js';
 import { GLYPHS, DAY_COLORS } from './map.js';
-import { CAT_LABEL } from './poi.js';
+import { CAT_LABEL, TIER_LABEL } from './poi.js';
 import { wxIcon } from './weather.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -73,7 +73,9 @@ export function createUI(cb) {
   });
   els.toggles.addEventListener('click', (e) => {
     const chip = e.target.closest('.chip');
-    if (chip) cb.onToggle(chip.dataset.cat);
+    if (!chip) return;
+    if (chip.dataset.tier != null) cb.onCfg({ maxTier: Number(chip.dataset.tier) });
+    else cb.onToggle(chip.dataset.cat);
   });
 
   els.itinerary.addEventListener('click', (e) => {
@@ -169,9 +171,12 @@ export function createUI(cb) {
     }
     els.warnings.innerHTML = rows.join('');
 
-    // toggle chips
-    for (const chip of els.toggles.querySelectorAll('.chip')) {
+    // toggle chips + budget selector
+    for (const chip of els.toggles.querySelectorAll('.chip[data-cat]')) {
       chip.classList.toggle('on', !!state.toggles[chip.dataset.cat]);
+    }
+    for (const chip of els.toggles.querySelectorAll('.chip[data-tier]')) {
+      chip.classList.toggle('on', Number(chip.dataset.tier) === (cfg.maxTier || 0));
     }
 
     // itinerary
@@ -256,9 +261,10 @@ export function createUI(cb) {
     const picked = s.chosen && s.chosen.poi.id === id && s.isPick;
     const kind = s.type === 'fuel' ? 'fuel' : s.type === 'lunch' ? 'lunch' : 'lodging';
     const v = ctx.state.votes[id];
+    const tier = c.tier ? `<span class="tier">${TIER_LABEL[c.tier]}</span> ` : '';
     return `
       <div class="alt" data-poi="${id}">
-        <span class="nm">${esc(c.poi.name || CAT_LABEL[c.poi.cat])}</span>
+        <span class="nm">${tier}${esc(c.poi.name || CAT_LABEL[c.poi.cat])}</span>
         <span class="meta">${c.o.toFixed(1)} mi off</span>
         <button class="mini ${v?.mine ? 'active' : ''}" data-vote="${id}" title="${esc((v?.names || []).join(', '))}">👍${v?.count ? ' ' + v.count : ''}</button>
         <button class="mini ${picked ? 'active' : ''}" data-pick="${id}" data-kind="${kind}" data-daykey="${day.idx}">${picked ? 'Picked' : 'Pick'}</button>

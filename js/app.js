@@ -2,7 +2,7 @@
 
 import { createStore, normalizePicks } from './state.js';
 import { loadRoute, reverseRoute, mileToBrpMp } from './route.js';
-import { loadPois, indexForRoute, refreshFromOverpass, CAT_LABEL, CATS } from './poi.js';
+import { loadPois, indexForRoute, refreshFromOverpass, CAT_LABEL, CATS, TIER_LABEL } from './poi.js';
 import { computePlan, classifyPoiSlot, minToTime } from './engine.js';
 import { createMap } from './map.js';
 import { createUI, showToast } from './ui.js';
@@ -13,7 +13,7 @@ import { buildGridIndex, projectToRoute, pointAtMile } from './geo.js';
 import { sunTimes } from './sun.js';
 import { dayWeather } from './weather.js';
 
-const DATA_V = '2026-06-10-1'; // bumped on data redeploys to bust the Pages CDN cache
+const DATA_V = '2026-06-10-2'; // bumped on data redeploys to bust the Pages CDN cache
 
 boot().catch((e) => {
   console.error(e);
@@ -85,13 +85,22 @@ async function boot() {
       t.cuisine ? `<div>🍽 ${escq(String(t.cuisine).replaceAll(';', ', '))}</div>` : '',
     ].join('');
     const nav = `https://www.google.com/maps/dir/?api=1&destination=${poi.lat},${poi.lon}`;
+    let rates = '';
+    if (poi.cat === 'lodging') {
+      const slot = classifyPoiSlot(current.plan, current.idx, poi.id);
+      const checkin = (slot && current.plan.days[slot.dayIdx]?.dateISO) || S.cfg.startDate;
+      const url = `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(poi.name || 'hotel')}&checkin=${checkin}&checkout=${addDays(checkin, 1)}`;
+      rates = `<a href="${url}" target="_blank" rel="noopener">Rates ↗</a>`;
+    }
+    const tier = entry.tier ? ` · <span class="tier">${TIER_LABEL[entry.tier]}</span>` : '';
     return `<div class="popup">
-      <div class="cat ${poi.cat}">${CAT_LABEL[poi.cat]}${poi.sub && poi.sub !== poi.cat ? ' · ' + escq(poi.sub.replace('_', ' ')) : ''}</div>
+      <div class="cat ${poi.cat}">${CAT_LABEL[poi.cat]}${poi.sub && poi.sub !== poi.cat ? ' · ' + escq(poi.sub.replace('_', ' ')) : ''}${tier}</div>
       <h3>${escq(poi.name || CAT_LABEL[poi.cat])}</h3>
       <div class="meta">${meta}</div>
       <div class="pacts">
         <button data-act="vote" class="${v?.mine ? 'active' : ''}">👍 ${v?.count || ''}</button>
         <button data-act="pick" class="${slotPick ? 'active' : ''}">${slotPick ? '★ Group stop' : 'Set as stop'}</button>
+        ${rates}
         <a href="${nav}" target="_blank" rel="noopener">Navigate ↗</a>
       </div>
     </div>`;

@@ -2,6 +2,11 @@
 
 const LS_KEY = 'dragon-run-v1';
 
+// The group's planned departure. Stored snapshots older than CFG_V are migrated
+// onto this date so everyone's app moves together when the plan changes.
+const TRIP_START = '2026-06-19';
+const CFG_V = 2;
+
 export const DEFAULTS = {
   cfg: {
     tankRangeMi: 130,
@@ -9,10 +14,11 @@ export const DEFAULTS = {
     hoursPerDay: 8,
     avgMph: 45,
     departTime: '08:00',
-    startDate: nextSaturday(),
+    startDate: TRIP_START,
     stayDays: 2,
     returnPreset: 'brp', // 'brp' | 'fast'
     includeCamping: true,
+    maxTier: 0, // lodging budget cap: 0 = any, 1 = $, 2 = $$
   },
   toggles: { fuel: true, food: true, lodging: true, camping: true, radar: false },
   picks: {
@@ -24,15 +30,12 @@ export const DEFAULTS = {
   dir: 'out', // 'out' | 'ret'
 };
 
-function nextSaturday() {
-  const d = new Date();
-  d.setDate(d.getDate() + ((6 - d.getDay() + 7) % 7 || 7));
-  return d.toISOString().slice(0, 10);
-}
-
 export function createStore() {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch { /* corrupted — start fresh */ }
+  if (saved && (saved.v || 1) < CFG_V && saved.cfg) {
+    saved.cfg.startDate = TRIP_START; // plan moved — carry every saved browser with it
+  }
 
   const state = {
     cfg: { ...DEFAULTS.cfg, ...(saved?.cfg || {}) },
@@ -59,7 +62,7 @@ export function createStore() {
     saveTimer = setTimeout(() => {
       try {
         const { cfg, toggles, picks, rider, tripId } = state;
-        localStorage.setItem(LS_KEY, JSON.stringify({ cfg, toggles, picks, rider, tripId }));
+        localStorage.setItem(LS_KEY, JSON.stringify({ v: CFG_V, cfg, toggles, picks, rider, tripId }));
       } catch { /* private mode / quota — in-memory state still works */ }
     }, 250);
   }

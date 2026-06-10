@@ -11,6 +11,7 @@ function makeIdx(totalMi, pois) {
       poi: { id: p.id, cat: p.cat, name: p.name || p.id, lat: 0, lon: 0, sub: null, tags: {} },
       m: p.m,
       o: p.o ?? 0.2,
+      tier: p.tier ?? 0,
     };
     byCat[p.cat].push(entry);
     byId.set(p.id, entry);
@@ -151,6 +152,38 @@ test('ETAs walk forward with dwell times', () => {
     lastEtd = s.etdMin;
   }
   assert.ok(day.arriveMin > day.departMin + (day.miles / CFG.avgMph) * 60 - 1e-9);
+});
+
+test('maxTier budget cap steers lodging suggestions; unknown tiers always pass', () => {
+  const pois = [
+    ...gasEvery(45, 646.5),
+    { id: 'hilton350', cat: 'lodging', m: 350, tier: 3 },
+    { id: 'motel290', cat: 'lodging', m: 290, tier: 1 },
+    { id: 'indie640', cat: 'lodging', m: 640, tier: 0 },
+  ];
+  const any = computePlan({ ...CFG, maxTier: 0 }, makeIdx(646.5, pois), {});
+  const cheap = computePlan({ ...CFG, maxTier: 1 }, makeIdx(646.5, pois), {});
+  assert.equal(any.days[0].stops.find((s) => s.type === 'lodging').chosen?.poi.id, 'hilton350');
+  assert.equal(cheap.days[0].stops.find((s) => s.type === 'lodging').chosen?.poi.id, 'motel290');
+  // unknown-tier independent still suggested for base camp under a $ cap
+  const base = cheap.days[cheap.days.length - 1].stops.find((s) => s.type === 'lodging');
+  assert.equal(base.chosen?.poi.id, 'indie640');
+});
+
+test('priceTier classifies brands into bands', async () => {
+  const { priceTier } = await import('../js/poi.js');
+  const t = (name, cat = 'lodging', sub = null, brand = null) =>
+    priceTier({ cat, sub, name, tags: { brand } });
+  assert.equal(t('Motel 6 Wytheville'), 1);
+  assert.equal(t('Econo Lodge near BRP'), 1);
+  assert.equal(t('Hampton Inn & Suites by Hilton'), 2); // sub-brand outranks the parent token
+  assert.equal(t('Tru by Hilton Asheville'), 2);
+  assert.equal(t('Holiday Inn Express'), 2);
+  assert.equal(t('DoubleTree by Hilton Asheville'), 3);
+  assert.equal(t('Courtyard Knoxville'), 3);
+  assert.equal(t('Fontana Village Resort'), 0);   // independent: unknown
+  assert.equal(t('Anywhere', 'camping'), 1);      // campgrounds are budget by nature
+  assert.equal(t('Backpackers place', 'lodging', 'hostel'), 1);
 });
 
 test('classifyPoiSlot maps categories to the right slot', () => {

@@ -328,6 +328,32 @@ input[type="range"]::-moz-range-thumb {
 .chip.on .dot-camping { background: var(--camping); box-shadow: 0 0 7px var(--camping); }
 .chip.on .dot-radar { background: #7fd4ff; box-shadow: 0 0 7px #7fd4ff; }
 
+.budget-row {
+  flex-basis: 100%;
+  display: flex; align-items: center; gap: 6px;
+  padding-top: 2px;
+}
+.budget-lbl {
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-right: 2px;
+}
+.chip.budget { padding: 4px 11px; }
+.chip.budget.on {
+  color: #16130c;
+  background: linear-gradient(180deg, var(--amber), var(--amber-deep));
+  border-color: var(--amber-deep);
+}
+
+.tier {
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--camping);
+  letter-spacing: .05em;
+}
+
 /* ---------- per-day sun & weather strip ---------- */
 
 .day-extras {

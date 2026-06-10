@@ -6,6 +6,27 @@ export const CATS = ['fuel', 'food', 'lodging', 'camping'];
 
 export const CAT_LABEL = { fuel: 'Gas', food: 'Food', lodging: 'Lodging', camping: 'Camping' };
 
+// ---- lodging price tiers (heuristic, by brand) ----
+// OSM has no nightly rates; recognizable US chains map to stable budget bands.
+// 1 = budget ($), 2 = mid ($$), 3 = upscale ($$$), 0 = unknown (independents).
+// Order matters: sub-brands like "Tru by Hilton" must hit the mid list before
+// the "hilton" token lands them in upscale.
+const TIER1_RE = /(motel 6|super 8|econo ?lodge|days inn|red roof|travelodge|knights inn|rodeway|americas best value|microtel|budget|oyo|scottish inn|passport inn|relax inn|deluxe inn|stay express)/;
+const TIER2_RE = /(quality inn|quality suites|comfort inn|comfort suites|sleep inn|la quinta|best western|baymont|wingate|ramada|howard johnson|americinn|country inn|holiday inn|hampton|fairfield|tru by hilton|avid|candlewood|mainstay|extended stay|clarion|surestay|cobblestone|home2)/;
+const TIER3_RE = /(doubletree|embassy suites|homewood|hilton|marriott|courtyard|springhill|residence inn|towneplace|hyatt|westin|sheraton|renaissance|omni|kimpton|autograph|curio|grand bohemian|aloft|ac hotel|graduate)/;
+
+export const TIER_LABEL = ['', '$', '$$', '$$$'];
+
+export function priceTier(poi) {
+  if (poi.cat === 'camping' || poi.sub === 'hostel') return 1;
+  if (poi.cat !== 'lodging') return 0;
+  const s = `${poi.name || ''} ${poi.tags?.brand || ''}`.toLowerCase();
+  if (TIER1_RE.test(s)) return 1;
+  if (TIER2_RE.test(s)) return 2;
+  if (TIER3_RE.test(s)) return 3;
+  return 0;
+}
+
 const REFRESH_LS_KEY = 'dragon-run-poi-refresh-v1';
 const REFRESH_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -29,7 +50,7 @@ export function indexForRoute(poiSet, route) {
     const pr = poi.routes[key];
     if (!pr || !byCat[poi.cat]) continue;
     const m = reversed ? Math.max(0, total - pr.m) : pr.m;
-    const entry = { poi, m: Math.round(m * 10) / 10, o: pr.o };
+    const entry = { poi, m: Math.round(m * 10) / 10, o: pr.o, tier: priceTier(poi) };
     byCat[poi.cat].push(entry);
     byId.set(poi.id, entry);
   }

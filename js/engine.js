@@ -83,6 +83,9 @@ export function computePlan(cfg, idx, picks = {}) {
   const cum = idx.route.cum;
   const total = cum[cum.length - 1];
   const lodgingCats = cfg.includeCamping ? ['lodging', 'camping'] : ['lodging'];
+  // Budget cap: keep lodging at or under cfg.maxTier ($=1, $$=2). Unknown-tier
+  // independents (0) always pass — no rate data is not the same as expensive.
+  const tierOk = (e) => !cfg.maxTier || !e.tier || e.tier <= cfg.maxTier;
 
   // ---- 1. day boundaries + overnight lodging ----
   const days = [];
@@ -97,13 +100,13 @@ export function computePlan(cfg, idx, picks = {}) {
     if (isFinal) {
       // base camp: lodging near the destination
       window = [Math.max(0, total - 12), total];
-      candidates = entriesInWindow(idx, lodgingCats, window[0], window[1], 8);
+      candidates = entriesInWindow(idx, lodgingCats, window[0], window[1], 8).filter(tierOk);
     } else {
       for (const widen of [0.12, 0.2, 0.3]) {
         const w0 = Math.max(startMile + 0.4 * milesPerDay, targetEnd - widen * milesPerDay);
         const w1 = Math.min(total, targetEnd + widen * milesPerDay);
         window = [w0, w1];
-        candidates = entriesInWindow(idx, lodgingCats, w0, w1, 5);
+        candidates = entriesInWindow(idx, lodgingCats, w0, w1, 5).filter(tierOk);
         if (candidates.length) break;
       }
     }

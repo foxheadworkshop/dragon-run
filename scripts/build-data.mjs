@@ -439,8 +439,8 @@ async function stepRoutes() {
   const closedMi = closedSpans.reduce((s, c) => s + (c.toMp - c.fromMp), 0);
   console.log(`    BRP segment total: ${round(bTotalMi, 1)} mi (parkway ~469, minus ${round(closedMi, 1)} closed, plus detours)`);
 
-  console.log(`  phase C: Cherokee -> Bryson City -> NC-28 -> Deals Gap`);
-  const C = await osrmRoute([pins[pins.length - 1], POINTS.brysonCity, POINTS.nc28Stecoah, POINTS.dealsGap]);
+  console.log(`  phase C: Cherokee -> Bryson City -> NC-28 -> Deals Gap -> base camp`);
+  const C = await osrmRoute([pins[pins.length - 1], POINTS.brysonCity, POINTS.nc28Stecoah, POINTS.dealsGap, POINTS.baseCamp]);
   console.log(`    ${round(C.totalM / 1609.344, 1)} mi`);
 
   const out = stitch([A, B, C]);
@@ -479,13 +479,14 @@ async function stepRoutes() {
       { name: 'Fredericksburg', lat: POINTS.fredericksburg[0], lon: POINTS.fredericksburg[1] },
       ...openAnchors,
       { name: 'Bryson City', lat: POINTS.brysonCity[0], lon: POINTS.brysonCity[1] },
-      { name: 'Deals Gap', lat: POINTS.dealsGap[0], lon: POINTS.dealsGap[1] },
+      { name: 'Deals Gap — Tail of the Dragon', lat: POINTS.dealsGap[0], lon: POINTS.dealsGap[1] },
+      { name: 'Base camp — 561 Deals Gap Rd', lat: POINTS.baseCamp[0], lon: POINTS.baseCamp[1] },
     ],
   });
 
-  console.log('  return-fast: Deals Gap -> US-129 -> I-40/I-81/I-64 -> Fredericksburg');
+  console.log('  return-fast: base camp -> US-129 -> I-40/I-81/I-64 -> Fredericksburg');
   const R = await osrmRoute([
-    POINTS.dealsGap, POINTS.chilhowee, POINTS.maryville, POINTS.knoxville, POINTS.dandridge,
+    POINTS.baseCamp, POINTS.chilhowee, POINTS.maryville, POINTS.knoxville, POINTS.dandridge,
     POINTS.bristol, POINTS.wytheville, POINTS.roanoke, POINTS.staunton, POINTS.charlottesville,
     POINTS.fredericksburg,
   ]);

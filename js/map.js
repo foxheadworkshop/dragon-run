@@ -137,8 +137,9 @@ export function createMap(el, handlers) {
       }
 
       // start / day-end / finish flags
+      const outbound = !route.reversedFrom && route.id === 'out';
       const start = pointAtMile(route, 0);
-      L.marker(start, { icon: flagIcon('START'), zIndexOffset: 900 }).addTo(flags);
+      L.marker(start, { icon: flagIcon(outbound ? 'START' : 'BASE CAMP'), zIndexOffset: 900 }).addTo(flags);
       plan.days.forEach((day, i) => {
         if (day.endMile >= route.cum[route.cum.length - 1] - 1e-6) return;
         const p = pointAtMile(route, day.endMile);
@@ -146,7 +147,7 @@ export function createMap(el, handlers) {
         L.marker(p, { icon: flagIcon(`D${i + 1} NIGHT${mp != null ? ` · MP ${Math.round(mp)}` : ''}`), zIndexOffset: 900 }).addTo(flags);
       });
       const end = pointAtMile(route, route.cum[route.cum.length - 1]);
-      L.marker(end, { icon: flagIcon('FINISH'), zIndexOffset: 900 }).addTo(flags);
+      L.marker(end, { icon: flagIcon(outbound ? 'BASE CAMP 🐉' : 'HOME'), zIndexOffset: 900 }).addTo(flags);
 
       // chosen stops as prominent pins
       for (const day of plan.days) {

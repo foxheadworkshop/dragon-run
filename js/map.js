@@ -1,0 +1,191 @@
+// All Leaflet rendering. Leaflet + markercluster come in as globals (classic
+// script tags) — do not import them.
+
+import { sliceCoords, pointAtMile } from './geo.js';
+import { mileToBrpMp } from './route.js';
+
+export const DAY_COLORS = ['#ff5d3b', '#ffb02e', '#41c7a6', '#5fa8ff', '#c792ea', '#ff7ab2', '#9ccc65', '#ffd54f'];
+
+export const GLYPHS = {
+  fuel: '<svg viewBox="0 0 24 24" fill="#16130c"><path d="M19.77 7.23l.01-.01-3.72-3.72L15 4.56l2.11 2.11c-.94.36-1.61 1.26-1.61 2.33 0 1.38 1.12 2.5 2.5 2.5.36 0 .69-.08 1-.21v7.21c0 .55-.45 1-1 1s-1-.45-1-1V14c0-1.1-.9-2-2-2h-1V5c0-1.1-.9-2-2-2H6c-1.1 0-2 .9-2 2v16h10v-7.5h1.5v5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V9c0-.69-.28-1.32-.73-1.77zM12 10H6V5h6v5z"/></svg>',
+  food: '<svg viewBox="0 0 24 24" fill="#16130c"><path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z"/></svg>',
+  lodging: '<svg viewBox="0 0 24 24" fill="#16130c"><path d="M7 13c1.66 0 3-1.34 3-3S8.66 7 7 7s-3 1.34-3 3 1.34 3 3 3zm12-6h-8v7H3V5H1v15h2v-3h18v3h2v-9c0-2.21-1.79-4-4-4z"/></svg>',
+  camping: '<svg viewBox="0 0 24 24" fill="#16130c"><path d="M12 3 1.7 21h7.1l3.2-5.9 3.2 5.9h7.1L12 3zm0 4.2L17.8 19h-2.3L12 12.6 8.5 19H6.2L12 7.2z"/></svg>',
+};
+
+export function createMap(el, handlers) {
+  const map = L.map(el, { zoomControl: false, attributionControl: true });
+  L.control.zoom({ position: 'topright' }).addTo(map);
+  map.attributionControl.setPrefix(false);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  }).addTo(map);
+
+  const base = L.layerGroup().addTo(map);
+  const bands = L.layerGroup().addTo(map);
+  const daySegs = L.layerGroup().addTo(map);
+  const closures = L.layerGroup().addTo(map);
+  const flags = L.layerGroup().addTo(map);
+  const chosenLayer = L.layerGroup().addTo(map);
+  const highlight = L.layerGroup().addTo(map);
+  const cluster = L.markerClusterGroup({
+    maxClusterRadius: 44,
+    disableClusteringAtZoom: 12,
+    showCoverageOnHover: false,
+    iconCreateFunction: (c) => L.divIcon({
+      className: 'dr-cluster',
+      html: String(c.getChildCount()),
+      iconSize: [32, 32],
+    }),
+  }).addTo(map);
+
+  let open = null; // { marker, entry } of the open popup
+  let fitted = false;
+
+  function poiIcon(cat, chosen = false) {
+    return L.divIcon({
+      className: chosen ? 'chosen-pin' : 'poi-pin',
+      html: `<div class="pin pin-${cat}">${GLYPHS[cat] || ''}</div>`,
+      iconSize: chosen ? [34, 34] : [26, 26],
+      iconAnchor: chosen ? [17, 30] : [13, 23],
+      popupAnchor: [0, -22],
+    });
+  }
+
+  function bindPoiPopup(marker, entry) {
+    marker.bindPopup(() => handlers.popupHtml(entry), { maxWidth: 290, className: 'dr-popup' });
+    marker.on('popupopen', (e) => {
+      open = { marker, entry };
+      const node = e.popup.getElement();
+      if (node && !node.dataset.wired) {
+        node.dataset.wired = '1';
+        node.addEventListener('click', (ev) => {
+          const btn = ev.target.closest('[data-act]');
+          if (btn) handlers.onPopupAction(btn.dataset.act, entry.poi.id);
+        });
+      }
+    });
+    marker.on('popupclose', () => { if (open?.marker === marker) open = null; });
+  }
+
+  return {
+    map,
+
+    setBase(route) {
+      base.clearLayers();
+      closures.clearLayers();
+      const latlngs = route.coords;
+      L.polyline(latlngs, { color: '#0b0c10', weight: 9, opacity: 0.85 }).addTo(base);
+      L.polyline(latlngs, { color: '#4a5263', weight: 4, opacity: 0.9 }).addTo(base);
+
+      for (const adv of route.advisories || []) {
+        const seg = sliceCoords(route, adv.startMile, adv.endMile);
+        L.polyline(seg, { color: '#ffcf5c', weight: 5, opacity: 0.85, dashArray: '2 9' })
+          .bindTooltip(`⚠ MP ${adv.fromMp}–${adv.toMp}: ${adv.note}`, { sticky: true })
+          .addTo(closures);
+      }
+      for (const det of route.detours || []) {
+        const seg = sliceCoords(route, det.startMile, det.endMile);
+        L.polyline(seg, { color: '#ff5d3b', weight: 5, opacity: 0.9, dashArray: '7 9' })
+          .bindTooltip(`🚧 Parkway closed MP ${det.fromMp}–${det.toMp} — riding the detour. ${det.note}`, { sticky: true })
+          .addTo(closures);
+        const mid = pointAtMile(route, (det.startMile + det.endMile) / 2);
+        L.marker(mid, {
+          icon: L.divIcon({
+            className: 'closed-label',
+            html: `<div class="lab">detour · MP ${Math.round(det.fromMp)}–${Math.round(det.toMp)} closed</div>`,
+            iconSize: null,
+          }),
+          interactive: false,
+        }).addTo(closures);
+      }
+      if (!fitted) {
+        map.fitBounds(L.latLngBounds(latlngs), { padding: [30, 30] });
+        fitted = true;
+      }
+    },
+
+    renderPlan(route, plan) {
+      daySegs.clearLayers();
+      flags.clearLayers();
+      bands.clearLayers();
+      chosenLayer.clearLayers();
+
+      plan.days.forEach((day, i) => {
+        const seg = sliceCoords(route, day.startMile, day.endMile);
+        L.polyline(seg, { color: DAY_COLORS[i % DAY_COLORS.length], weight: 5, opacity: 0.95 })
+          .bindTooltip(`Day ${i + 1} — ${Math.round(day.miles)} mi`, { sticky: true })
+          .addTo(daySegs);
+      });
+
+      for (const leg of plan.fuelLegs) {
+        const seg = sliceCoords(route, leg.window[0], Math.min(leg.window[1], route.cum[route.cum.length - 1]));
+        L.polyline(seg, { color: '#ffb02e', weight: 14, opacity: 0.22, lineCap: 'butt', interactive: false })
+          .addTo(bands);
+      }
+
+      // start / day-end / finish flags
+      const start = pointAtMile(route, 0);
+      L.marker(start, { icon: flagIcon('START'), zIndexOffset: 900 }).addTo(flags);
+      plan.days.forEach((day, i) => {
+        if (day.endMile >= route.cum[route.cum.length - 1] - 1e-6) return;
+        const p = pointAtMile(route, day.endMile);
+        const mp = mileToBrpMp(route, day.endMile);
+        L.marker(p, { icon: flagIcon(`D${i + 1} NIGHT${mp != null ? ` · MP ${Math.round(mp)}` : ''}`), zIndexOffset: 900 }).addTo(flags);
+      });
+      const end = pointAtMile(route, route.cum[route.cum.length - 1]);
+      L.marker(end, { icon: flagIcon('FINISH'), zIndexOffset: 900 }).addTo(flags);
+
+      // chosen stops as prominent pins
+      for (const day of plan.days) {
+        for (const s of day.stops) {
+          if (!s.chosen) continue;
+          const { poi } = s.chosen;
+          const m = L.marker([poi.lat, poi.lon], {
+            icon: poiIcon(poi.cat, true),
+            zIndexOffset: 1000,
+          });
+          bindPoiPopup(m, s.chosen);
+          m.addTo(chosenLayer);
+        }
+      }
+    },
+
+    setMarkers(entries) {
+      cluster.clearLayers();
+      const ms = entries.map((entry) => {
+        const m = L.marker([entry.poi.lat, entry.poi.lon], { icon: poiIcon(entry.poi.cat) });
+        bindPoiPopup(m, entry);
+        return m;
+      });
+      cluster.addLayers(ms);
+    },
+
+    focusMile(route, mile, zoom = 11) {
+      map.flyTo(pointAtMile(route, mile), zoom, { duration: 0.6 });
+    },
+
+    focusEntry(entry, zoom = 13) {
+      map.flyTo([entry.poi.lat, entry.poi.lon], zoom, { duration: 0.6 });
+    },
+
+    pulse(entry) {
+      highlight.clearLayers();
+      const c = L.circleMarker([entry.poi.lat, entry.poi.lon], {
+        radius: 18, color: '#ffb02e', weight: 3, fillOpacity: 0.08,
+      }).addTo(highlight);
+      setTimeout(() => highlight.removeLayer(c), 1800);
+    },
+
+    refreshOpenPopup() {
+      if (open) open.marker.getPopup()?.setContent(handlers.popupHtml(open.entry));
+    },
+
+    invalidate() { setTimeout(() => map.invalidateSize(), 260); },
+  };
+
+  function flagIcon(text) {
+    return L.divIcon({ className: 'day-flag', html: `<div class="flag">${text}</div>`, iconSize: null, iconAnchor: [6, 24] });
+  }
+}

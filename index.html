@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Dragon Run — Fredericksburg → Tail of the Dragon</title>
+  <meta name="description" content="Group motorcycle trip planner: down the Blue Ridge Parkway to Deals Gap. Sliders for tank range, saddle time, and pace — gas, food, and lodging options live along the route.">
+  <meta name="theme-color" content="#0e1014">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐉</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@500;600;700;800&family=Barlow:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+  <link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+  <div id="app">
+    <main id="map" aria-label="Trip map"></main>
+
+    <button id="sheetHandle" class="sheet-handle" aria-label="Expand or collapse the plan panel">
+      <span></span>
+    </button>
+
+    <aside id="panel">
+      <header class="brand">
+        <div class="brand-row">
+          <h1>Dragon&nbsp;Run</h1>
+          <div id="riders" class="riders" title="Riders online"></div>
+        </div>
+        <p class="tagline">Fredericksburg → Blue Ridge Pkwy → Tail of the Dragon</p>
+      </header>
+      <div class="roadline" role="presentation"></div>
+
+      <nav class="tabs" id="dirTabs" aria-label="Direction">
+        <button class="tab active" data-dir="out">Outbound</button>
+        <button class="tab" data-dir="ret">Return</button>
+      </nav>
+      <div id="retPreset" class="ret-preset" hidden>
+        <label class="radio"><input type="radio" name="retPreset" value="brp"> Parkway again</label>
+        <label class="radio"><input type="radio" name="retPreset" value="fast"> Fast — I-81</label>
+      </div>
+
+      <section class="card" aria-label="Ride math">
+        <div class="slider-row">
+          <div class="slider-head">
+            <label for="sl-tank">Fuel range</label>
+            <output id="out-tank" for="sl-tank">130<small> mi/tank</small></output>
+          </div>
+          <input type="range" id="sl-tank" min="80" max="250" step="5" value="130">
+        </div>
+        <div class="slider-row">
+          <div class="slider-head">
+            <label for="sl-hours">Saddle time</label>
+            <output id="out-hours" for="sl-hours">8<small> h/day</small></output>
+          </div>
+          <input type="range" id="sl-hours" min="4" max="12" step="0.5" value="8">
+        </div>
+        <div class="slider-row">
+          <div class="slider-head">
+            <label for="sl-mph">Average pace</label>
+            <output id="out-mph" for="sl-mph">45<small> mph</small></output>
+          </div>
+          <input type="range" id="sl-mph" min="30" max="60" step="1" value="45">
+        </div>
+        <p class="computed" id="computedLine"></p>
+        <div class="row-inputs">
+          <label>Depart <input type="time" id="inDepart" value="08:00"></label>
+          <label>Start <input type="date" id="inDate"></label>
+          <label>Gap days <input type="number" id="inStay" min="0" max="7" value="2"></label>
+          <label>Reserve
+            <select id="inReserve">
+              <option value="10">10%</option>
+              <option value="15" selected>15%</option>
+              <option value="20">20%</option>
+              <option value="25">25%</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="summary" id="summary" aria-label="Trip summary"></section>
+
+      <div id="warnings" aria-live="polite"></div>
+
+      <section class="toggles" id="toggles" aria-label="Show stops">
+        <button class="chip on" data-cat="fuel"><i class="dot dot-fuel"></i>Gas</button>
+        <button class="chip on" data-cat="food"><i class="dot dot-food"></i>Food</button>
+        <button class="chip on" data-cat="lodging"><i class="dot dot-lodging"></i>Lodging</button>
+        <button class="chip on" data-cat="camping"><i class="dot dot-camping"></i>Camping</button>
+      </section>
+
+      <section id="itinerary" aria-label="Itinerary"></section>
+
+      <footer class="actions">
+        <button id="btnShare" class="btn btn-primary">Share trip</button>
+        <button id="btnGpx" class="btn">GPX</button>
+        <button id="btnRefresh" class="btn" title="Pull fresh places from OpenStreetMap">Refresh places</button>
+        <button id="btnName" class="btn rider-chip" title="Your rider name">…</button>
+      </footer>
+      <p class="attribution">
+        Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors (ODbL) ·
+        routing <a href="https://project-osrm.org" target="_blank" rel="noopener">OSRM</a> ·
+        plan ahead and ride your own ride — road signs beat apps.
+      </p>
+    </aside>
+  </div>
+
+  <div id="toasts" aria-live="polite"></div>
+
+  <dialog id="nameModal">
+    <form method="dialog">
+      <h2>Who's riding?</h2>
+      <p>Your name shows up on votes and the riders list.</p>
+      <input type="text" id="inName" maxlength="40" placeholder="e.g. Foxhead" autocomplete="off">
+      <menu>
+        <button value="ok" class="btn btn-primary">Ride</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>

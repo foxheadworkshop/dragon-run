@@ -11,6 +11,8 @@ A static web app — no build step, no API keys. Move three sliders (fuel range,
 - **Fuel windows** shaded on the map: fill up anywhere in the amber band and the next band shifts accordingly. Pick a specific station and everything downstream recalculates.
 - **Overnight + lunch suggestions** with alternates, ETAs, and off-route distance (gas on the parkway means a short detour into town — the app shows how far).
 - **Group mode**: share one link; everyone sees the same plan live, votes 👍 on stops, claims picks, and shows up in the riders list. Powered by Firebase (free tier) — without it the app still works solo with snapshot share links.
+- **Sunrise/sunset per riding day** (computed locally — no API) with smart after-dark arrival warnings based on the actual sunset where that day ends, not a fixed clock time.
+- **Weather along the route**: National Weather Service forecasts (free, no key) sampled at each day's departure / midpoint / arrival — temperature, precip chance, conditions — plus a toggleable **live NEXRAD radar overlay** on the map (Iowa Environmental Mesonet tiles).
 - **GPX export** (route track + chosen stops) for Garmin / REVER / OsmAnd — cell service at Deals Gap is famously nonexistent.
 - **Offline-friendly**: route and places data are baked in; Firestore queues writes offline and syncs later.
 

@@ -42,6 +42,17 @@ export function createMap(el, handlers) {
 
   let open = null; // { marker, entry } of the open popup
   let fitted = false;
+  let radarLayer = null, radarTimer = null;
+
+  function makeRadarLayer() {
+    // NEXRAD base-reflectivity composite, server-refreshed ~5 min; the bucketed
+    // query param busts the browser tile cache when we redraw.
+    const bucket = Math.floor(Date.now() / 300_000);
+    return L.tileLayer(
+      `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?_=${bucket}`,
+      { opacity: 0.55, maxZoom: 19, attribution: 'Radar: Iowa Environmental Mesonet' }
+    );
+  }
 
   function poiIcon(cat, chosen = false) {
     return L.divIcon({
@@ -180,6 +191,22 @@ export function createMap(el, handlers) {
 
     refreshOpenPopup() {
       if (open) open.marker.getPopup()?.setContent(handlers.popupHtml(open.entry));
+    },
+
+    setRadar(on) {
+      clearInterval(radarTimer);
+      radarTimer = null;
+      if (!on) {
+        if (radarLayer) map.removeLayer(radarLayer);
+        radarLayer = null;
+        return;
+      }
+      if (!radarLayer) radarLayer = makeRadarLayer().addTo(map);
+      radarTimer = setInterval(() => {
+        const old = radarLayer;
+        radarLayer = makeRadarLayer().addTo(map);
+        setTimeout(() => old && map.removeLayer(old), 1500); // overlap to avoid flicker
+      }, 300_000);
     },
 
     invalidate() { setTimeout(() => map.invalidateSize(), 260); },

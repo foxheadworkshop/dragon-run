@@ -326,6 +326,31 @@ input[type="range"]::-moz-range-thumb {
 .chip.on .dot-food { background: var(--food); box-shadow: 0 0 7px var(--food); }
 .chip.on .dot-lodging { background: var(--lodging); box-shadow: 0 0 7px var(--lodging); }
 .chip.on .dot-camping { background: var(--camping); box-shadow: 0 0 7px var(--camping); }
+.chip.on .dot-radar { background: #7fd4ff; box-shadow: 0 0 7px #7fd4ff; }
+
+/* ---------- per-day sun & weather strip ---------- */
+
+.day-extras {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+  padding: 7px 13px;
+  border-bottom: 1px dashed var(--line);
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+.day-extras .sun { white-space: nowrap; letter-spacing: 0.02em; }
+.wx-strip { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.wx-chip {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 7px;
+  white-space: nowrap;
+  cursor: default;
+}
+.wx-chip .lbl { font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-faint); }
+.wx-chip em { font-style: normal; color: #8fc7ff; font-weight: 600; }
+.wx-pending, .wx-na { color: var(--ink-faint); font-style: italic; }
 
 /* ---------- itinerary ---------- */
 

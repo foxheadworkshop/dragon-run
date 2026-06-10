@@ -14,7 +14,7 @@ export const DEFAULTS = {
     returnPreset: 'brp', // 'brp' | 'fast'
     includeCamping: true,
   },
-  toggles: { fuel: true, food: true, lodging: true, camping: true },
+  toggles: { fuel: true, food: true, lodging: true, camping: true, radar: false },
   picks: {
     out: { fuel: [], lodging: {}, lunch: {} },
     ret: { fuel: [], lodging: {}, lunch: {} },

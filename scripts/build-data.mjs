@@ -105,6 +105,11 @@ async function overpass(ql, label, { allowEmpty = false } = {}) {
   const isValid = (j) => overpassLooksValid(j) && (allowEmpty || j.elements.length > 0);
   return cachedJson('overpass:' + ql, async () => {
     let lastErr;
+    for (let pass = 0; pass < 3; pass++) {
+    if (pass > 0) {
+      console.log(`  all mirrors busy (${label}) — cooling down 90s (pass ${pass + 1}/3)`);
+      await sleep(90_000);
+    }
     for (const host of OVERPASS_HOSTS) {
       for (let attempt = 0; attempt < 3; attempt++) {
         await throttled(4000);
@@ -135,6 +140,7 @@ async function overpass(ql, label, { allowEmpty = false } = {}) {
           await sleep(5000 * (attempt + 1));
         }
       }
+    }
     }
     throw lastErr;
   }, isValid);

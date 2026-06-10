@@ -4,6 +4,7 @@ import { minToTime } from './engine.js';
 import { mileToBrpMp } from './route.js';
 import { GLYPHS, DAY_COLORS } from './map.js';
 import { CAT_LABEL } from './poi.js';
+import { wxIcon } from './weather.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -199,7 +200,27 @@ export function createUI(cb) {
         ${minToTime(day.departMin)} → ~${minToTime(day.arriveMin)}</div>
       </div>`;
     const stops = day.stops.map((s, si) => stopRow(ctx, day, s, `${state.dir}:${i}:${s.type}:${si}`)).join('');
-    return `<article class="day-card">${head}<ul class="stops">${stops}</ul></article>`;
+    return `<article class="day-card">${head}${dayExtras(day)}<ul class="stops">${stops}</ul></article>`;
+  }
+
+  function dayExtras(day) {
+    const sun = day.sun
+      ? `<span class="sun" title="Sunrise / sunset along this day's stretch">☀️ ${minToTime(day.sun.riseMin)} &nbsp;🌙 ${minToTime(day.sun.setMin)}</span>`
+      : '';
+    let wx;
+    if (day.wx == null) {
+      wx = `<span class="wx-pending">fetching forecast…</span>`;
+    } else if (!day.wx.length || day.wx.every((s) => !s.fc)) {
+      wx = `<span class="wx-na">forecast opens closer to ${esc(day.dateISO || 'the date')}</span>`;
+    } else {
+      const LBL = { start: 'dep', mid: 'mid', end: 'arr' };
+      wx = `<span class="wx-strip">` + day.wx.filter((s) => s.fc).map((s) =>
+        `<span class="wx-chip" title="${esc(s.fc.short)} · wind ${esc(s.fc.wind || '–')}">` +
+        `<span class="lbl">${LBL[s.at]}</span>${wxIcon(s.fc.short)} ${s.fc.t}°` +
+        `${s.fc.pop ? `<em>${s.fc.pop}%</em>` : ''}</span>`
+      ).join('') + `</span>`;
+    }
+    return `<div class="day-extras">${sun}${wx}</div>`;
   }
 
   function stopRow(ctx, day, s, key) {

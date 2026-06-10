@@ -9,7 +9,9 @@ import { createUI, showToast } from './ui.js';
 import { createSync } from './sync.js';
 import { encodeStateHash, decodeHash } from './share.js';
 import { buildGpx, downloadGpx } from './gpx.js';
-import { buildGridIndex, projectToRoute } from './geo.js';
+import { buildGridIndex, projectToRoute, pointAtMile } from './geo.js';
+import { sunTimes } from './sun.js';
+import { dayWeather } from './weather.js';
 
 const DATA_V = '2026-06-10-1'; // bumped on data redeploys to bust the Pages CDN cache
 
@@ -112,12 +114,74 @@ async function boot() {
     if (S.dir === 'ret') outDays = computePlan(engCfg, idxFor('out'), S.picks.out).days.length;
     const dateOffsets = S.dir === 'out' ? 0 : outDays + (S.cfg.stayDays || 0);
 
+    decoratePlan(rk, route, plan, dateOffsets);
+
     const routeChanged = rk !== current.rk;
-    current = { plan, idx, route, rk };
+    current = { plan, idx, route, rk, dateOffsets };
     if (routeChanged) mapApi.setBase(route);
     mapApi.renderPlan(route, plan);
     if (markers || routeChanged) mapApi.setMarkers(visibleEntries(idx));
     ui.render({ state: S, route, plan, dateOffsets });
+    scheduleWeather(rk, route, plan);
+  }
+
+  // Sun times, dark-arrival warnings (replacing the engine's fixed 19:30 rule),
+  // and any already-fetched weather, attached per day.
+  function decoratePlan(rk, route, plan, dateOffsets) {
+    plan.warnings = plan.warnings.filter((w) => w.code !== 'LATE_ARRIVAL');
+    for (const day of plan.days) {
+      day.dateISO = addDays(S.cfg.startDate, dateOffsets + day.idx);
+      const [sLat, sLon] = pointAtMile(route, day.startMile);
+      const [eLat, eLon] = pointAtMile(route, day.endMile);
+      const rise = sunTimes(sLat, sLon, day.dateISO);
+      const set = sunTimes(eLat, eLon, day.dateISO);
+      day.sun = rise && set ? { riseMin: rise.riseMin, setMin: set.setMin } : null;
+      if (day.sun && day.arriveMin > day.sun.setMin - 30) {
+        const after = day.arriveMin > day.sun.setMin;
+        plan.warnings.push({
+          code: 'DARK_ARRIVAL', dayIdx: day.idx,
+          msg: `Day ${day.idx + 1} arrives ~${minToTime(day.arriveMin)}, ${after ? 'after' : 'right at'} sunset (${minToTime(day.sun.setMin)}). Deer o'clock — start earlier or trim hours.`,
+        });
+      }
+      day.wx = wxCache.get(wxKey(rk, day)) || null;
+    }
+  }
+
+  // ---------- weather ----------
+
+  const wxCache = new Map();
+  const wxInFlight = new Set();
+  let wxTimer = null;
+
+  function wxKey(rk, day) {
+    // re-fetch when the day's span moves meaningfully (>25 mi bucket)
+    return `${rk}:${day.idx}:${day.dateISO}:${Math.round(day.endMile / 25)}`;
+  }
+
+  function scheduleWeather(rk, route, plan) {
+    clearTimeout(wxTimer);
+    wxTimer = setTimeout(async () => {
+      const missing = plan.days.filter((d) => {
+        const k = wxKey(rk, d);
+        return !wxCache.has(k) && !wxInFlight.has(k);
+      });
+      if (!missing.length) return;
+      await Promise.all(missing.map(async (day) => {
+        const k = wxKey(rk, day);
+        wxInFlight.add(k);
+        try {
+          wxCache.set(k, await dayWeather(route, day, day.dateISO));
+        } catch { wxCache.set(k, []); }
+        finally { wxInFlight.delete(k); }
+      }));
+      if (current.rk === rk) recompute(); // cache hit now — no fetch loop
+    }, 700);
+  }
+
+  function addDays(iso, n) {
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(iso || '') ? new Date(iso + 'T12:00:00') : new Date();
+    d.setDate(d.getDate() + n);
+    return d.toISOString().slice(0, 10);
   }
 
   function visibleEntries(idx) {
@@ -188,6 +252,11 @@ async function boot() {
     onToggle(cat) {
       S.toggles[cat] = !S.toggles[cat];
       store.update('toggles', {});
+      if (cat === 'radar') {
+        mapApi.setRadar(S.toggles.radar);
+        recompute();
+        return;
+      }
       recompute({ markers: true });
       if (cat === 'camping' && !applyingRemote) debounced('cfg', () => sync?.saveConfig({}));
     },
@@ -302,6 +371,7 @@ async function boot() {
   // ---------- go ----------
 
   recompute({ markers: true });
+  if (S.toggles.radar) mapApi.setRadar(true);
   await initSync();
   recompute();
 

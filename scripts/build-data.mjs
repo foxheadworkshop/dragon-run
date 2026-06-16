@@ -1,5 +1,5 @@
 // One-time data builder for Dragon Run.
-//   node scripts/build-data.mjs --step relation|routes|pois|all [--audit]
+//   node scripts/build-data.mjs --step relation|routes|pois|rides|all [--audit]
 //
 // Fetches the Blue Ridge Parkway geometry (OSM relation 55450), samples routing
 // pins every ~5 mi, builds OSRM routes (outbound via BRP + interstate return),
@@ -16,6 +16,7 @@ import {
   buildGridIndex, projectToRoute,
 } from '../js/geo.js';
 import { BRP_ANCHORS, POINTS, RETURN_FAST_ANCHORS, CLOSURES, ADVISORIES } from './waypoints.mjs';
+import { RIDES } from './rides.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const CACHE_DIR = path.join(ROOT, 'scripts', '.cache');
@@ -647,6 +648,50 @@ nwr['amenity'~'^(restaurant|fast_food|cafe)$'](around:${CORRIDOR_M},${LINE});
   console.log(`  wrote pois.json: ${Math.round(fs.statSync(file).size / 1024)} KB`);
 }
 
+// ---------- step: rides (famous named motorcycle roads) ----------
+
+async function stepRides() {
+  console.log(`== step: rides (${RIDES.length} curated)`);
+  const out = [];
+  for (const r of RIDES) {
+    const pts = [r.endpointA, ...(r.via || []), r.endpointB].map((p) => [p.lat, p.lon]);
+    let route;
+    try {
+      route = await osrmRoute(pts);
+    } catch (e) {
+      console.log(`  ! ${r.id}: OSRM failed (${e.osrmCode || e.message}) — skipped`);
+      continue;
+    }
+    const coords = route.coords;
+    const cum = [0];
+    for (const d of route.dists) cum.push(cum[cum.length - 1] + d / 1609.344);
+    const lengthMi = cum[cum.length - 1];
+    const mid = pointAtMile({ coords, cum }, lengthMi / 2);
+    const keep = simplifyIndices(coords, 10, 400);
+
+    // Sanity: routed length should be near the stated famous length.
+    const drift = r.lengthMi ? Math.abs(lengthMi - r.lengthMi) / r.lengthMi : 0;
+    const flag = drift > 0.4 ? `  <-- CHECK: routed ${round(lengthMi, 1)} vs stated ${r.lengthMi} mi` : '';
+
+    out.push({
+      id: r.id, name: r.name, road: r.road, region: r.region,
+      difficulty: r.difficulty, curves: r.curves ?? null,
+      lengthMi: round(lengthMi, 1), statedLengthMi: r.lengthMi ?? null,
+      blurb: r.blurb, status: r.status || 'Open.',
+      currentlyRideable: r.currentlyRideable !== false,
+      nearDealsGapMi: r.nearDealsGapMi ?? null,
+      a: r.endpointA, b: r.endpointB,
+      mid: [round(mid[0], 5), round(mid[1], 5)],
+      coords: keep.map((i) => [round(coords[i][0], 5), round(coords[i][1], 5)]),
+    });
+    console.log(`  ${r.id}: ${round(lengthMi, 1)} mi, ${coords.length}->${keep.length} pts${flag}`);
+  }
+  out.sort((a, b) => (a.nearDealsGapMi ?? 1e9) - (b.nearDealsGapMi ?? 1e9));
+  const file = path.join(DATA_DIR, 'rides.json');
+  fs.writeFileSync(file, JSON.stringify({ builtAt: new Date().toISOString().slice(0, 10), rides: out }));
+  console.log(`  wrote rides.json: ${out.length} rides, ${Math.round(fs.statSync(file).size / 1024)} KB`);
+}
+
 // ---------- CLI ----------
 
 const args = process.argv.slice(2);
@@ -656,6 +701,7 @@ try {
   if (step === 'relation' || step === 'all') await stepRelation();
   if (step === 'routes' || step === 'all') await stepRoutes();
   if (step === 'pois' || step === 'all') await stepPois();
+  if (step === 'rides' || step === 'all') await stepRides();
   if (args.includes('--audit') && !['routes', 'all'].includes(step)) {
     audit(JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'route-outbound.json'), 'utf8')));
   }

@@ -20,7 +20,7 @@ export const DEFAULTS = {
     includeCamping: true,
     maxTier: 0, // lodging budget cap: 0 = any, 1 = $, 2 = $$
   },
-  toggles: { fuel: true, food: true, lodging: true, camping: true, radar: false },
+  toggles: { fuel: true, food: true, lodging: true, camping: true, rides: true, radar: false },
   picks: {
     out: { fuel: [], lodging: {}, lunch: {} },
     ret: { fuel: [], lodging: {}, lunch: {} },

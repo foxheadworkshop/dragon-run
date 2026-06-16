@@ -5,6 +5,7 @@ import { mileToBrpMp } from './route.js';
 import { GLYPHS, DAY_COLORS } from './map.js';
 import { CAT_LABEL, TIER_LABEL } from './poi.js';
 import { wxIcon } from './weather.js';
+import { DIFF_LABEL, DIFF_COLOR } from './rides.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -37,6 +38,7 @@ export function createUI(cb) {
     warnings: $('#warnings'),
     toggles: $('#toggles'),
     itinerary: $('#itinerary'),
+    ridesPanel: $('#ridesPanel'),
     riders: $('#riders'),
     btnShare: $('#btnShare'),
     btnGpx: $('#btnGpx'),
@@ -99,6 +101,11 @@ export function createUI(cb) {
     if (alt) { cb.onFocusPoi(alt.dataset.poi); return; }
     const stop = e.target.closest('.stop');
     if (stop) cb.onFocusStop(Number(stop.dataset.mile), stop.dataset.poi || null);
+  });
+
+  els.ridesPanel.addEventListener('click', (e) => {
+    const card = e.target.closest('.ride-card');
+    if (card) cb.onFocusRide(card.dataset.ride);
   });
 
   els.btnShare.addEventListener('click', () => cb.onShare());
@@ -182,6 +189,9 @@ export function createUI(cb) {
     // itinerary
     els.itinerary.innerHTML = plan.days.map((day, i) => dayCard(ctx, day, i, dateOffsets)).join('');
 
+    // famous rides
+    renderRides(ctx);
+
     // riders + name chip
     els.riders.innerHTML = (state.riders || [])
       .slice(0, 8)
@@ -192,6 +202,29 @@ export function createUI(cb) {
 
   function stat(v, k) {
     return `<div class="stat"><div class="v">${v}</div><div class="k">${k}</div></div>`;
+  }
+
+  function renderRides(ctx) {
+    const rides = ctx.rides || [];
+    if (!rides.length || !ctx.state.toggles.rides) { els.ridesPanel.innerHTML = ''; return; }
+    const cards = rides.map((r) => {
+      const closed = r.currentlyRideable === false;
+      const dist = r.nearDealsGapMi != null
+        ? (r.nearDealsGapMi < 1 ? 'at base camp' : `${Math.round(r.nearDealsGapMi)} mi from base`)
+        : '';
+      const curves = r.curves ? `<div class="curves">${r.curves} curves</div>` : '';
+      const diff = `<span class="diff" style="background:${DIFF_COLOR[r.difficulty] || '#9aa1ac'}">${DIFF_LABEL[r.difficulty] || r.difficulty}</span>`;
+      return `<article class="ride-card${closed ? ' closed' : ''}" data-ride="${esc(r.id)}">
+        <div class="rname">${esc(r.name)}</div>
+        <div class="rroad">${esc(r.road)}${r.region ? ' · ' + esc(r.region) : ''}</div>
+        <div class="rmeta">${Math.round(r.lengthMi)} mi${curves}<div>${dist}</div></div>
+        <div class="rblurb">${esc(r.blurb)}</div>
+        <div class="rstat${closed ? ' warn' : ''}">${diff} ${closed ? '⚠ ' : ''}${esc(r.status)}</div>
+      </article>`;
+    }).join('');
+    els.ridesPanel.innerHTML =
+      `<div class="rides-head"><h2><span class="ride-accent">▲</span> Legendary Rides</h2>` +
+      `<span class="count">${rides.length} near your route</span></div>${cards}`;
   }
 
   function dayCard(ctx, day, i, dateOffsets) {

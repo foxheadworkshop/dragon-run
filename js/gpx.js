@@ -10,7 +10,7 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[ch]));
 }
 
-export function buildGpx(tripName, legs) {
+export function buildGpx(tripName, legs, rides = []) {
   // legs: [{ label, route, plan }]
   const wpts = [];
   const trks = [];
@@ -31,6 +31,19 @@ export function buildGpx(tripName, legs) {
     const keep = simplifyIndices(route.coords, 30, 1500);
     const pts = keep.map((i) => `<trkpt lat="${route.coords[i][0]}" lon="${route.coords[i][1]}"/>`).join('');
     trks.push(`<trk><name>${esc(`${tripName} — ${label}`)}</name><trkseg>${pts}</trkseg></trk>`);
+  }
+  // Famous rides as their own tracks + a waypoint at each start, so they show up
+  // as selectable routes in the GPS at the Gap.
+  for (const ride of rides) {
+    if (!ride.coords?.length) continue;
+    wpts.push(
+      `<wpt lat="${ride.a.lat}" lon="${ride.a.lon}">` +
+      `<name>${esc(`Ride: ${ride.name}`)}</name>` +
+      `<desc>${esc(`${ride.road} · ${Math.round(ride.lengthMi)} mi${ride.curves ? ` · ${ride.curves} curves` : ''}`)}</desc>` +
+      `<sym>Scenic Area</sym></wpt>`
+    );
+    const pts = ride.coords.map((c) => `<trkpt lat="${c[0]}" lon="${c[1]}"/>`).join('');
+    trks.push(`<trk><name>${esc(`Ride — ${ride.name}`)}</name><trkseg>${pts}</trkseg></trk>`);
   }
   return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Dragon Run" xmlns="http://www.topografix.com/GPX/1/1">

@@ -11,6 +11,7 @@ A static web app — no build step, no API keys. Move three sliders (fuel range,
 - **Fuel windows** shaded on the map: fill up anywhere in the amber band and the next band shifts accordingly. Pick a specific station and everything downstream recalculates.
 - **Overnight + lunch suggestions** with alternates, ETAs, and off-route distance (gas on the parkway means a short detour into town — the app shows how far).
 - **Group mode**: share one link; everyone sees the same plan live, votes 👍 on stops, claims picks, and shows up in the riders list. Powered by Firebase (free tier) — without it the app still works solo with snapshot share links.
+- **Legendary rides layer**: 20 famous named motorcycle roads near the trip (Tail of the Dragon, Cherohala Skyway, Moonshiner 28, Devil's Triangle, The Snake, Back of the Dragon, North Georgia's Six Gap, and more) drawn as highlighted magenta lines with a browsable list — each with length, curve count, difficulty, a vivid blurb, and **current 2026 status** (Hurricane Helene closures researched and verified per road). Tap a ride to fly to it; rides also export as their own GPX tracks. Sorted by distance from base camp. Data lives in `data/rides.json`, built from `scripts/rides.mjs` via `--step rides`.
 - **Sunrise/sunset per riding day** (computed locally — no API) with smart after-dark arrival warnings based on the actual sunset where that day ends, not a fixed clock time.
 - **Weather along the route**: National Weather Service forecasts (free, no key) sampled at each day's departure / midpoint / arrival — temperature, precip chance, conditions — plus a toggleable **live NEXRAD radar overlay** on the map (Iowa Environmental Mesonet tiles).
 - **GPX export** (route track + chosen stops) for Garmin / REVER / OsmAnd — cell service at Deals Gap is famously nonexistent.
@@ -36,8 +37,10 @@ node --test scripts/engine.test.mjs
 Data snapshots live in `data/` and are committed. To refresh (new closures, new businesses):
 
 ```powershell
-node scripts/build-data.mjs --step all     # relation -> routes -> pois, with audits
+node scripts/build-data.mjs --step all     # relation -> routes -> pois -> rides, with audits
 ```
+
+Famous rides are curated in `scripts/rides.mjs` (name, road, stats, status, and endpoint coords) and OSRM-routed to real geometry by `--step rides`. The build prints a length-drift CHECK if a routed ride is wildly longer than its stated length — usually a sign an endpoint snapped to the wrong road. Verify suspect rides by routing the endpoints (a detour factor of routed÷straight-line above ~3 on a point-to-point ride means it left its road).
 
 The builder probes every 5-mile parkway leg against OSRM, merges unroutable legs with the official NPS closure list (`scripts/waypoints.mjs` → `CLOSURES` — update these from [nps.gov road closures](https://www.nps.gov/blri/planyourvisit/roadclosures.htm)), and self-heals until every long leg is a declared detour. Responses are cached in `scripts/.cache/`.
 

@@ -23,10 +23,12 @@ export function createMap(el, handlers) {
   }).addTo(map);
 
   const base = L.layerGroup().addTo(map);
+  const rideLines = L.layerGroup().addTo(map);
   const bands = L.layerGroup().addTo(map);
   const daySegs = L.layerGroup().addTo(map);
   const closures = L.layerGroup().addTo(map);
   const flags = L.layerGroup().addTo(map);
+  const rideMarkers = L.layerGroup().addTo(map);
   const chosenLayer = L.layerGroup().addTo(map);
   const highlight = L.layerGroup().addTo(map);
   const cluster = L.markerClusterGroup({
@@ -43,6 +45,10 @@ export function createMap(el, handlers) {
   let open = null; // { marker, entry } of the open popup
   let fitted = false;
   let radarLayer = null, radarTimer = null;
+  let ridesVisible = true;
+  const rideRefs = new Map(); // id -> { line, casing, marker }
+
+  const MOTO_GLYPH = '<svg viewBox="0 0 24 24" fill="#16130c"><path d="M19.44 9.03 15.41 5H11v2h3.59l2 2H5c-2.8 0-5 2.2-5 5s2.2 5 5 5c2.46 0 4.45-1.69 4.9-4h1.65l2.77-2.77c-.21.54-.32 1.14-.32 1.77 0 2.8 2.2 5 5 5s5-2.2 5-5c0-2.65-1.97-4.77-4.56-4.97zM7.82 15C7.4 16.15 6.28 17 5 17c-1.65 0-3-1.35-3-3s1.35-3 3-3c1.28 0 2.4.85 2.82 2H5v2h2.82zM19 17c-1.65 0-3-1.35-3-3s1.35-3 3-3 3 1.35 3 3-1.35 3-3 3z"/></svg>';
 
   function makeRadarLayer() {
     // NEXRAD base-reflectivity composite, server-refreshed ~5 min; the bucketed
@@ -78,6 +84,17 @@ export function createMap(el, handlers) {
       }
     });
     marker.on('popupclose', () => { if (open?.marker === marker) open = null; });
+  }
+
+  function rideIcon(ride) {
+    const dim = ride.currentlyRideable === false;
+    return L.divIcon({
+      className: 'ride-pin',
+      html: `<div class="rp${dim ? ' rp-closed' : ''}">${MOTO_GLYPH}</div>`,
+      iconSize: [28, 28],
+      iconAnchor: [14, 14],
+      popupAnchor: [0, -14],
+    });
   }
 
   return {
@@ -210,8 +227,68 @@ export function createMap(el, handlers) {
       }, 300_000);
     },
 
+    setRides(rides) {
+      rideLines.clearLayers();
+      rideMarkers.clearLayers();
+      rideRefs.clear();
+      for (const ride of rides) {
+        if (!ride.coords?.length) continue;
+        const closed = ride.currentlyRideable === false;
+        const casing = L.polyline(ride.coords, {
+          color: '#1a0a1e', weight: 8, opacity: 0.55, lineCap: 'round', interactive: false,
+        });
+        const line = L.polyline(ride.coords, {
+          color: closed ? '#9aa1ac' : '#ff3df0', weight: 4, opacity: 0.95,
+          lineCap: 'round', dashArray: closed ? '3 8' : null,
+        }).bindTooltip(`${ride.name} · ${ride.road}${closed ? ' (closed)' : ''}`, { sticky: true });
+        casing.addTo(rideLines);
+        line.addTo(rideLines);
+
+        const marker = L.marker(ride.mid, { icon: rideIcon(ride), zIndexOffset: 650 });
+        marker.bindPopup(() => handlers.ridePopupHtml(ride), { maxWidth: 280, className: 'dr-popup' });
+        marker.on('popupopen', (e) => {
+          const node = e.popup.getElement();
+          if (node && !node.dataset.wired) {
+            node.dataset.wired = '1';
+            node.addEventListener('click', (ev) => {
+              const btn = ev.target.closest('[data-act]');
+              if (btn) handlers.onRideAction?.(btn.dataset.act, ride.id);
+            });
+          }
+        });
+        marker.addTo(rideMarkers);
+        rideRefs.set(ride.id, { line, casing, marker });
+      }
+      applyRidesVisibility();
+    },
+
+    toggleRides(on) { ridesVisible = on; applyRidesVisibility(); },
+
+    focusRide(ride) {
+      if (!ride?.coords?.length) return;
+      // fitBounds (not flyToBounds — it ignores maxZoom) so tiny rides don't slam to z19.
+      map.fitBounds(L.latLngBounds(ride.coords), { padding: [70, 70], maxZoom: 13 });
+      const ref = rideRefs.get(ride.id);
+      if (ref) {
+        const orig = ref.line.options.weight;
+        ref.line.setStyle({ weight: orig + 4, opacity: 1 });
+        setTimeout(() => ref.line.setStyle({ weight: orig, opacity: 0.95 }), 1400);
+        ref.marker.openPopup();
+      }
+    },
+
     invalidate() { setTimeout(() => map.invalidateSize(), 260); },
   };
+
+  function applyRidesVisibility() {
+    if (ridesVisible) {
+      if (!map.hasLayer(rideLines)) map.addLayer(rideLines);
+      if (!map.hasLayer(rideMarkers)) map.addLayer(rideMarkers);
+    } else {
+      map.removeLayer(rideLines);
+      map.removeLayer(rideMarkers);
+    }
+  }
 
   function flagIcon(text) {
     return L.divIcon({ className: 'day-flag', html: `<div class="flag">${text}</div>`, iconSize: null, iconAnchor: [6, 24] });

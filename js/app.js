@@ -2,6 +2,7 @@
 
 import { createStore, normalizePicks } from './state.js';
 import { loadRoute, reverseRoute, mileToBrpMp } from './route.js';
+import { loadRides, DIFF_LABEL, milesFromBase } from './rides.js';
 import { loadPois, indexForRoute, refreshFromOverpass, CAT_LABEL, CATS, TIER_LABEL } from './poi.js';
 import { computePlan, classifyPoiSlot, minToTime } from './engine.js';
 import { createMap } from './map.js';
@@ -13,7 +14,7 @@ import { buildGridIndex, projectToRoute, pointAtMile } from './geo.js';
 import { sunTimes } from './sun.js';
 import { dayWeather } from './weather.js';
 
-const DATA_V = '2026-06-10-2'; // bumped on data redeploys to bust the Pages CDN cache
+const DATA_V = '2026-06-10-3'; // bumped on data redeploys to bust the Pages CDN cache
 
 boot().catch((e) => {
   console.error(e);
@@ -35,11 +36,14 @@ async function boot() {
   }
   if (hash?.tripId) S.tripId = hash.tripId;
 
-  const [outRoute, retFastRoute, poiSet] = await Promise.all([
+  const [outRoute, retFastRoute, poiSet, rideSet] = await Promise.all([
     loadRoute(`./data/route-outbound.json?v=${DATA_V}`),
     loadRoute(`./data/route-return-fast.json?v=${DATA_V}`),
     loadPois(`./data/pois.json?v=${DATA_V}`),
+    loadRides(`./data/rides.json?v=${DATA_V}`),
   ]);
+  const rides = (rideSet.rides || []).sort((a, b) => milesFromBase(a) - milesFromBase(b));
+  const rideById = new Map(rides.map((r) => [r.id, r]));
   const routes = {
     out: outRoute,
     retBrp: reverseRoute(outRoute, 'Return — Blue Ridge Parkway'),
@@ -70,7 +74,28 @@ async function boot() {
       else if (act === 'pick') applyPickToggle(poiId);
       mapApi.refreshOpenPopup();
     },
+    ridePopupHtml: (ride) => ridePopupHtml(ride),
   });
+
+  function ridePopupHtml(ride) {
+    const closed = ride.currentlyRideable === false;
+    const nav = `https://www.google.com/maps/dir/?api=1&destination=${ride.a.lat},${ride.a.lon}`;
+    const stats = [
+      `<span><b>${Math.round(ride.lengthMi)}</b> mi</span>`,
+      ride.curves ? `<span><b>${ride.curves}</b> curves</span>` : '',
+      `<span><b>${DIFF_LABEL[ride.difficulty] || ride.difficulty}</b></span>`,
+    ].join('');
+    return `<div class="popup">
+      <div class="cat ride">Legendary ride · ${escq(ride.road)}</div>
+      <h3>${escq(ride.name)}</h3>
+      <div class="ride-stats">${stats}</div>
+      <div class="meta">${escq(ride.blurb)}</div>
+      <div class="meta"${closed ? ' style="color:var(--danger)"' : ''}>${closed ? '⚠ ' : ''}${escq(ride.status)}</div>
+      <div class="pacts">
+        <a href="${nav}" target="_blank" rel="noopener">Ride it — navigate ↗</a>
+      </div>
+    </div>`;
+  }
 
   function popupHtml(entry) {
     const { poi } = entry;
@@ -130,7 +155,7 @@ async function boot() {
     if (routeChanged) mapApi.setBase(route);
     mapApi.renderPlan(route, plan);
     if (markers || routeChanged) mapApi.setMarkers(visibleEntries(idx));
-    ui.render({ state: S, route, plan, dateOffsets });
+    ui.render({ state: S, route, plan, dateOffsets, rides });
     scheduleWeather(rk, route, plan);
   }
 
@@ -266,6 +291,11 @@ async function boot() {
         recompute();
         return;
       }
+      if (cat === 'rides') {
+        mapApi.toggleRides(S.toggles.rides);
+        recompute();
+        return;
+      }
       recompute({ markers: true });
       if (cat === 'camping' && !applyingRemote) debounced('cfg', () => sync?.saveConfig({}));
     },
@@ -286,6 +316,12 @@ async function boot() {
     onFocusPoi(poiId) {
       const entry = current.idx.byId.get(poiId);
       if (entry) { mapApi.focusEntry(entry, 13); mapApi.pulse(entry); }
+    },
+    onFocusRide(rideId) {
+      const ride = rideById.get(rideId);
+      if (!ride) return;
+      if (!S.toggles.rides) { S.toggles.rides = true; store.update('toggles', {}); mapApi.toggleRides(true); }
+      mapApi.focusRide(ride);
     },
     onRerender() { recompute(); },
     async onShare() {
@@ -310,7 +346,7 @@ async function boot() {
       const xml = buildGpx('Dragon Run', [
         { label: 'OUT', route: routes.out, plan: computePlan(engCfg, idxFor('out'), S.picks.out) },
         { label: 'RET', route: routes[retKey], plan: computePlan(engCfg, idxFor(retKey), S.picks.ret) },
-      ]);
+      ], rides);
       downloadGpx('dragon-run.gpx', xml);
       showToast('GPX saved — load it in your GPS app');
     },
@@ -379,13 +415,15 @@ async function boot() {
 
   // ---------- go ----------
 
+  mapApi.setRides(rides);
+  mapApi.toggleRides(S.toggles.rides);
   recompute({ markers: true });
   if (S.toggles.radar) mapApi.setRadar(true);
   await initSync();
   recompute();
 
   // Console/debug handle (also used by automated verification).
-  window.DR = { mapApi, routes, store, idxFor, get current() { return current; }, recompute };
+  window.DR = { mapApi, routes, store, idxFor, rides, get current() { return current; }, recompute };
 
   if (!S.rider.name) {
     const name = await ui.askName('');

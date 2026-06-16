@@ -156,6 +156,7 @@ async function boot() {
     if (routeChanged) {
       mapApi.setBase(route);
       mapApi.fitRoute(route, !firstLoad); // animate to the new route, except on first paint
+      if (!firstLoad) mapApi.flashRoute(route); // bright pulse so the switch is unmistakable
     }
     mapApi.renderPlan(route, plan);
     if (markers || routeChanged) mapApi.setMarkers(visibleEntries(idx));

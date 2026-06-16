@@ -744,6 +744,19 @@ input[type="range"]::-moz-range-thumb {
 .chosen-pin .pin svg { width: 17px; height: 17px; transform: rotate(45deg); }
 @keyframes pinpop { from { scale: .6; } to { scale: 1; } }
 
+/* bright pulse tracing a newly-selected route */
+.leaflet-overlay-pane path.route-flash {
+  filter: drop-shadow(0 0 4px #fff);
+  animation: routeFlash 1.5s ease-out forwards;
+}
+@keyframes routeFlash {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  38% { opacity: 0.15; }
+  60% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 .day-flag { background: none; border: none; }
 .day-flag .flag {
   font-family: var(--font-display);

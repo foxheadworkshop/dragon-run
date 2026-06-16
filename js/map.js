@@ -131,10 +131,28 @@ export function createMap(el, handlers) {
 
     // Frame the active trip route (not the scattered ride lines). Animated on a
     // route switch so the change is obvious even when two routes share endpoints.
+    // Pads the bottom by the mobile sheet height so the route isn't hidden behind it.
     fitRoute(route, animate = true) {
       const b = L.latLngBounds(route.coords);
-      if (animate && map._loaded) map.flyToBounds(b, { padding: [34, 34], duration: 0.7 });
-      else map.fitBounds(b, { padding: [34, 34] });
+      const panel = document.getElementById('panel');
+      const sheet = panel && getComputedStyle(panel).position === 'fixed';
+      // fitBounds (setView under the hood) — NOT flyToBounds, whose flight math
+      // throws NaN when the target view ≈ the current one (our two return routes
+      // share endpoints). Pad the bottom past the mobile sheet so the route shows.
+      map.fitBounds(b, {
+        paddingTopLeft: [30, 30],
+        paddingBottomRight: sheet ? [20, Math.min(panel.offsetHeight + 20, innerHeight * 0.5)] : [30, 30],
+        animate: !!animate,
+      });
+    },
+
+    // Trace the active route with a bright pulsing line so a route switch is
+    // unmistakable even when the viewport barely moves.
+    flashRoute(route) {
+      const fl = L.polyline(route.coords, {
+        className: 'route-flash', color: '#ffffff', weight: 8, opacity: 1, interactive: false,
+      }).addTo(highlight);
+      setTimeout(() => { if (highlight.hasLayer(fl)) highlight.removeLayer(fl); }, 1500);
     },
 
     renderPlan(route, plan) {

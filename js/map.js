@@ -43,7 +43,6 @@ export function createMap(el, handlers) {
   }).addTo(map);
 
   let open = null; // { marker, entry } of the open popup
-  let fitted = false;
   let radarLayer = null, radarTimer = null;
   let ridesVisible = true;
   const rideRefs = new Map(); // id -> { line, casing, marker }
@@ -128,10 +127,14 @@ export function createMap(el, handlers) {
           interactive: false,
         }).addTo(closures);
       }
-      if (!fitted) {
-        map.fitBounds(L.latLngBounds(latlngs), { padding: [30, 30] });
-        fitted = true;
-      }
+    },
+
+    // Frame the active trip route (not the scattered ride lines). Animated on a
+    // route switch so the change is obvious even when two routes share endpoints.
+    fitRoute(route, animate = true) {
+      const b = L.latLngBounds(route.coords);
+      if (animate && map._loaded) map.flyToBounds(b, { padding: [34, 34], duration: 0.7 });
+      else map.fitBounds(b, { padding: [34, 34] });
     },
 
     renderPlan(route, plan) {

@@ -151,8 +151,12 @@ async function boot() {
     decoratePlan(rk, route, plan, dateOffsets);
 
     const routeChanged = rk !== current.rk;
+    const firstLoad = current.rk === null;
     current = { plan, idx, route, rk, dateOffsets };
-    if (routeChanged) mapApi.setBase(route);
+    if (routeChanged) {
+      mapApi.setBase(route);
+      mapApi.fitRoute(route, !firstLoad); // animate to the new route, except on first paint
+    }
     mapApi.renderPlan(route, plan);
     if (markers || routeChanged) mapApi.setMarkers(visibleEntries(idx));
     ui.render({ state: S, route, plan, dateOffsets, rides });
@@ -281,6 +285,10 @@ async function boot() {
     onCfg(partial) {
       store.update('cfg', partial);
       recompute();
+      if ('returnPreset' in partial && !applyingRemote) {
+        const label = partial.returnPreset === 'fast' ? 'Fast — I-81' : 'Blue Ridge Parkway';
+        showToast(`Return route: ${label} · ${Math.round(current.route.totalMi)} mi`);
+      }
       if (!applyingRemote) debounced('cfg', () => sync?.saveConfig(partial));
     },
     onToggle(cat) {

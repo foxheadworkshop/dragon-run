@@ -164,6 +164,96 @@ html, body {
   margin-bottom: 12px;
 }
 
+.card-hint {
+  margin: -2px 0 12px;
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--ink-faint);
+  letter-spacing: 0.01em;
+}
+
+/* small "i" help affordance next to labels (hover reveals the title tooltip) */
+.info {
+  display: inline-grid;
+  place-items: center;
+  width: 13px; height: 13px;
+  margin-left: 4px;
+  border-radius: 50%;
+  border: 1px solid var(--ink-faint);
+  color: var(--ink-faint);
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  vertical-align: middle;
+}
+.slider-head label:hover .info { border-color: var(--amber); color: var(--amber); }
+
+/* ---------- collapsible sections (native <details>) ---------- */
+
+.collapse {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.collapse > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 13px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  transition: color .15s;
+}
+.collapse > summary::-webkit-details-marker { display: none; }
+.collapse > summary::before {
+  content: '';
+  width: 0; height: 0;
+  border-left: 6px solid var(--amber);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform .18s ease;
+  flex: none;
+}
+.collapse[open] > summary::before { transform: rotate(90deg); }
+.collapse > summary:hover { color: var(--ink); }
+.collapse .sum-note,
+.collapse .count {
+  margin-left: auto;
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-faint);
+}
+
+/* inset variant: nested inside the slider card, no chrome of its own */
+.collapse.inset {
+  border: 0;
+  border-top: 1px dashed var(--line);
+  border-radius: 0;
+  background: transparent;
+  margin: 8px -14px -12px;
+}
+.collapse.inset > summary {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  padding: 9px 14px;
+  color: var(--ink-faint);
+}
+.collapse.inset[open] > summary { color: var(--ink-dim); }
+
 .slider-row { margin-bottom: 12px; }
 .slider-head {
   display: flex;
@@ -241,8 +331,7 @@ input[type="range"]::-moz-range-thumb {
 
 .row-inputs {
   display: flex; flex-wrap: wrap; gap: 8px 14px;
-  border-top: 1px dashed var(--line);
-  padding-top: 10px;
+  padding: 0 14px 12px;
   font-size: 12.5px;
   color: var(--ink-dim);
 }
@@ -306,7 +395,7 @@ input[type="range"]::-moz-range-thumb {
 
 /* ---------- toggles ---------- */
 
-.toggles { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.toggles { display: flex; gap: 6px; flex-wrap: wrap; padding: 2px 11px 12px; }
 .chip {
   display: inline-flex; align-items: center; gap: 7px;
   font-family: var(--font-body);
@@ -331,20 +420,10 @@ input[type="range"]::-moz-range-thumb {
 
 /* ---------- famous rides panel ---------- */
 
-.rides-panel { margin-bottom: 12px; }
-.rides-head {
-  display: flex; align-items: baseline; gap: 8px;
-  margin: 2px 0 8px;
-}
-.rides-head h2 {
-  font-family: var(--font-display);
-  font-weight: 700; font-size: 20px;
-  letter-spacing: 0.06em; text-transform: uppercase;
-  margin: 0;
-  color: var(--ink);
-}
-.rides-head .ride-accent { color: #ff3df0; }
-.rides-head .count { font-size: 12px; color: var(--ink-faint); }
+.rides-panel { display: block; }
+.rides-panel[hidden] { display: none; }
+.rides-collapse .ride-accent { color: #ff3df0; margin-right: -2px; }
+.rides-body { padding: 4px 11px 10px; }
 
 .ride-card {
   display: grid;

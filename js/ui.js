@@ -119,6 +119,9 @@ export function createUI(cb) {
     cb.onSheetToggle();
   });
 
+  // Persist collapse open/closed state for the static sections.
+  for (const el of document.querySelectorAll('details.collapse[id]')) wireCollapse(el);
+
   function paintSlider(s) {
     const v = Number(s.input.value), min = Number(s.input.min), max = Number(s.input.max);
     s.input.style.setProperty('--pct', `${((v - min) / (max - min)) * 100}%`);
@@ -157,11 +160,12 @@ export function createUI(cb) {
 
     // summary
     const lastDay = plan.days[plan.days.length - 1];
+    const dest = state.dir === 'out' ? 'Deals Gap' : 'home';
     els.summary.innerHTML = [
-      stat(Math.round(plan.totals.miles), 'mi this leg'),
-      stat(plan.days.length, `day${plan.days.length > 1 ? 's' : ''} riding`),
-      stat(plan.totals.fuelStops, 'fuel stops'),
-      stat(minToTime(lastDay.arriveMin).replace(' ', '&hairsp;'), state.dir === 'out' ? 'at the Dragon' : 'home'),
+      stat(Math.round(plan.totals.miles), 'mi this leg', `Total riding distance ${state.dir === 'out' ? 'out to Deals Gap' : 'home'} (one way)`),
+      stat(plan.days.length, `day${plan.days.length > 1 ? 's' : ''} riding`, 'Riding days this leg — driven by saddle time × pace'),
+      stat(plan.totals.fuelStops, 'fuel stops', 'Suggested fuel stops, spaced within your tank range'),
+      stat(minToTime(lastDay.arriveMin).replace(' ', '&hairsp;'), state.dir === 'out' ? 'at the Dragon' : 'home', `Estimated arrival at ${dest} on the final day`),
     ].join('');
 
     // warnings + closure notices
@@ -189,9 +193,6 @@ export function createUI(cb) {
     // itinerary
     els.itinerary.innerHTML = plan.days.map((day, i) => dayCard(ctx, day, i, dateOffsets)).join('');
 
-    // famous rides
-    renderRides(ctx);
-
     // riders + name chip
     els.riders.innerHTML = (state.riders || [])
       .slice(0, 8)
@@ -200,13 +201,14 @@ export function createUI(cb) {
     els.btnName.textContent = state.rider.name ? `🏍 ${state.rider.name}` : 'Set your name';
   }
 
-  function stat(v, k) {
-    return `<div class="stat"><div class="v">${v}</div><div class="k">${k}</div></div>`;
+  function stat(v, k, tip) {
+    return `<div class="stat"${tip ? ` title="${esc(tip)}"` : ''}><div class="v">${v}</div><div class="k">${k}</div></div>`;
   }
 
-  function renderRides(ctx) {
-    const rides = ctx.rides || [];
-    if (!rides.length || !ctx.state.toggles.rides) { els.ridesPanel.innerHTML = ''; return; }
+  // Rides are static — mounted once, not re-rendered on slider changes. The list
+  // lives in a collapsed <details> so it doesn't bloat the panel until wanted.
+  function mountRides(rides) {
+    if (!rides || !rides.length) { els.ridesPanel.innerHTML = ''; return; }
     const cards = rides.map((r) => {
       const closed = r.currentlyRideable === false;
       const dist = r.nearDealsGapMi != null
@@ -214,18 +216,24 @@ export function createUI(cb) {
         : '';
       const curves = r.curves ? `<div class="curves">${r.curves} curves</div>` : '';
       const diff = `<span class="diff" style="background:${DIFF_COLOR[r.difficulty] || '#9aa1ac'}">${DIFF_LABEL[r.difficulty] || r.difficulty}</span>`;
-      return `<article class="ride-card${closed ? ' closed' : ''}" data-ride="${esc(r.id)}">
+      const shortStatus = String(r.status || '').split('. ')[0].replace(/\.$/, '');
+      return `<article class="ride-card${closed ? ' closed' : ''}" data-ride="${esc(r.id)}" title="Tap to show this ride on the map">
         <div class="rname">${esc(r.name)}</div>
         <div class="rroad">${esc(r.road)}${r.region ? ' · ' + esc(r.region) : ''}</div>
         <div class="rmeta">${Math.round(r.lengthMi)} mi${curves}<div>${dist}</div></div>
         <div class="rblurb">${esc(r.blurb)}</div>
-        <div class="rstat${closed ? ' warn' : ''}">${diff} ${closed ? '⚠ ' : ''}${esc(r.status)}</div>
+        <div class="rstat${closed ? ' warn' : ''}" title="${esc(r.status)}">${diff} ${closed ? '⚠ ' : ''}${esc(shortStatus)}</div>
       </article>`;
     }).join('');
     els.ridesPanel.innerHTML =
-      `<div class="rides-head"><h2><span class="ride-accent">▲</span> Legendary Rides</h2>` +
-      `<span class="count">${rides.length} near your route</span></div>${cards}`;
+      `<details class="collapse rides-collapse" id="cd-rides">
+        <summary><span class="ride-accent">▲</span> Legendary Rides <span class="count">${rides.length} famous roads near you</span></summary>
+        <div class="rides-body">${cards}</div>
+      </details>`;
+    wireCollapse(document.getElementById('cd-rides'));
   }
+
+  function setRidesVisible(on) { els.ridesPanel.hidden = !on; }
 
   function dayCard(ctx, day, i, dateOffsets) {
     const { state, route } = ctx;
@@ -318,7 +326,21 @@ export function createUI(cb) {
     });
   }
 
-  return { render, askName, isDragging: () => dragging !== null };
+  return { render, mountRides, setRidesVisible, askName, isDragging: () => dragging !== null };
+}
+
+// Remember whether a <details class="collapse"> is open across reloads.
+function wireCollapse(el) {
+  if (!el || !el.id) return;
+  const key = 'drc:' + el.id;
+  try {
+    const s = localStorage.getItem(key);
+    if (s === '1') el.open = true;
+    else if (s === '0') el.open = false;
+  } catch { /* private mode */ }
+  el.addEventListener('toggle', () => {
+    try { localStorage.setItem(key, el.open ? '1' : '0'); } catch { /* ignore */ }
+  });
 }
 
 function catColor(cat) {

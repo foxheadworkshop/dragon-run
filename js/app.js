@@ -293,7 +293,7 @@ async function boot() {
       }
       if (cat === 'rides') {
         mapApi.toggleRides(S.toggles.rides);
-        recompute();
+        ui.setRidesVisible(S.toggles.rides);
         return;
       }
       recompute({ markers: true });
@@ -417,6 +417,8 @@ async function boot() {
 
   mapApi.setRides(rides);
   mapApi.toggleRides(S.toggles.rides);
+  ui.mountRides(rides);
+  ui.setRidesVisible(S.toggles.rides);
   recompute({ markers: true });
   if (S.toggles.radar) mapApi.setRadar(true);
   await initSync();

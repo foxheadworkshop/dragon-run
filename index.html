@@ -34,80 +34,87 @@
       <div class="roadline" role="presentation"></div>
 
       <nav class="tabs" id="dirTabs" aria-label="Direction">
-        <button class="tab active" data-dir="out">Outbound</button>
-        <button class="tab" data-dir="ret">Return</button>
+        <button class="tab active" data-dir="out" title="Plan the ride out: Fredericksburg → Blue Ridge Parkway → Deals Gap">Outbound</button>
+        <button class="tab" data-dir="ret" title="Plan the ride home from Deals Gap">Return</button>
       </nav>
       <div id="retPreset" class="ret-preset" hidden>
-        <label class="radio"><input type="radio" name="retPreset" value="brp"> Parkway again</label>
-        <label class="radio"><input type="radio" name="retPreset" value="fast"> Fast — I-81</label>
+        <label class="radio" title="Ride the Blue Ridge Parkway back the way you came"><input type="radio" name="retPreset" value="brp"> Parkway again</label>
+        <label class="radio" title="Skip the scenery — straight home on the interstate"><input type="radio" name="retPreset" value="fast"> Fast — I-81</label>
       </div>
 
       <section class="card" aria-label="Ride math">
+        <p class="card-hint">Drag to replan — stops, fuel &amp; timing update live.</p>
         <div class="slider-row">
           <div class="slider-head">
-            <label for="sl-tank">Fuel range</label>
+            <label for="sl-tank" title="Your bike's range on one tank of gas. Sets how far apart fuel stops can be — drop it for the thirstiest bike in the group.">Fuel range <i class="info" aria-hidden="true">i</i></label>
             <output id="out-tank" for="sl-tank">130<small> mi/tank</small></output>
           </div>
-          <input type="range" id="sl-tank" min="80" max="250" step="5" value="130">
+          <input type="range" id="sl-tank" min="80" max="250" step="5" value="130" aria-label="Fuel range in miles per tank">
         </div>
         <div class="slider-row">
           <div class="slider-head">
-            <label for="sl-hours">Saddle time</label>
+            <label for="sl-hours" title="Hours per day you want to be riding. With pace, this sets how far each day goes and where you stop for the night.">Saddle time <i class="info" aria-hidden="true">i</i></label>
             <output id="out-hours" for="sl-hours">8<small> h/day</small></output>
           </div>
-          <input type="range" id="sl-hours" min="4" max="12" step="0.5" value="8">
+          <input type="range" id="sl-hours" min="4" max="12" step="0.5" value="8" aria-label="Saddle time in hours per day">
         </div>
         <div class="slider-row">
           <div class="slider-head">
-            <label for="sl-mph">Average pace</label>
+            <label for="sl-mph" title="Realistic moving average — curvy mountain roads are slower than they look. Sets day length and arrival times.">Average pace <i class="info" aria-hidden="true">i</i></label>
             <output id="out-mph" for="sl-mph">45<small> mph</small></output>
           </div>
-          <input type="range" id="sl-mph" min="30" max="60" step="1" value="45">
+          <input type="range" id="sl-mph" min="30" max="60" step="1" value="45" aria-label="Average pace in miles per hour">
         </div>
         <p class="computed" id="computedLine"></p>
-        <div class="row-inputs">
-          <label>Depart <input type="time" id="inDepart" value="08:00"></label>
-          <label>Start <input type="date" id="inDate"></label>
-          <label>Gap days <input type="number" id="inStay" min="0" max="7" value="2"></label>
-          <label>Reserve
-            <select id="inReserve">
-              <option value="10">10%</option>
-              <option value="15" selected>15%</option>
-              <option value="20">20%</option>
-              <option value="25">25%</option>
-            </select>
-          </label>
-        </div>
+        <details class="collapse inset" id="cd-details">
+          <summary>Departure &amp; fuel reserve</summary>
+          <div class="row-inputs">
+            <label title="What time you roll out each morning — drives the day's arrival times">Depart <input type="time" id="inDepart" value="08:00"></label>
+            <label title="First day of the trip">Start <input type="date" id="inDate"></label>
+            <label title="Days spent riding around Deals Gap before heading home">Gap days <input type="number" id="inStay" min="0" max="7" value="2"></label>
+            <label title="Fuel kept in reserve — a bigger buffer means earlier, safer fuel stops">Reserve
+              <select id="inReserve">
+                <option value="10">10%</option>
+                <option value="15" selected>15%</option>
+                <option value="20">20%</option>
+                <option value="25">25%</option>
+              </select>
+            </label>
+          </div>
+        </details>
       </section>
 
       <section class="summary" id="summary" aria-label="Trip summary"></section>
 
       <div id="warnings" aria-live="polite"></div>
 
-      <section class="toggles" id="toggles" aria-label="Show stops">
-        <button class="chip on" data-cat="fuel"><i class="dot dot-fuel"></i>Gas</button>
-        <button class="chip on" data-cat="food"><i class="dot dot-food"></i>Food</button>
-        <button class="chip on" data-cat="lodging"><i class="dot dot-lodging"></i>Lodging</button>
-        <button class="chip on" data-cat="camping"><i class="dot dot-camping"></i>Camping</button>
-        <button class="chip on" data-cat="rides" title="Famous motorcycle roads"><i class="dot dot-rides"></i>Rides</button>
-        <button class="chip" data-cat="radar" title="Live NEXRAD precipitation radar"><i class="dot dot-radar"></i>Radar</button>
-        <div class="budget-row" title="Caps suggested hotels by typical brand price band. Independents with unknown rates always show.">
-          <span class="budget-lbl">Hotel budget</span>
-          <button class="chip budget" data-tier="0">Any</button>
-          <button class="chip budget" data-tier="1">$</button>
-          <button class="chip budget" data-tier="2">$$</button>
+      <details class="collapse" id="cd-layers" open>
+        <summary>Map layers <span class="sum-note">what shows on the map</span></summary>
+        <div class="toggles" id="toggles" aria-label="Show stops">
+          <button class="chip on" data-cat="fuel" title="Gas stations near the route"><i class="dot dot-fuel"></i>Gas</button>
+          <button class="chip on" data-cat="food" title="Restaurants, cafés &amp; fast food"><i class="dot dot-food"></i>Food</button>
+          <button class="chip on" data-cat="lodging" title="Hotels, motels &amp; inns"><i class="dot dot-lodging"></i>Lodging</button>
+          <button class="chip on" data-cat="camping" title="Campgrounds — also offered as overnight stops"><i class="dot dot-camping"></i>Camping</button>
+          <button class="chip on" data-cat="rides" title="Famous motorcycle roads, drawn in magenta"><i class="dot dot-rides"></i>Rides</button>
+          <button class="chip" data-cat="radar" title="Live NEXRAD precipitation radar overlay"><i class="dot dot-radar"></i>Radar</button>
+          <div class="budget-row" title="Caps suggested hotels by typical brand price band ($ budget, $$ mid). Independents with unknown rates always show.">
+            <span class="budget-lbl">Hotel budget</span>
+            <button class="chip budget" data-tier="0">Any</button>
+            <button class="chip budget" data-tier="1">$</button>
+            <button class="chip budget" data-tier="2">$$</button>
+          </div>
         </div>
-      </section>
+      </details>
 
       <section id="itinerary" aria-label="Itinerary"></section>
 
       <section id="ridesPanel" class="rides-panel" aria-label="Famous rides"></section>
 
       <footer class="actions">
-        <button id="btnShare" class="btn btn-primary">Share trip</button>
-        <button id="btnGpx" class="btn">GPX</button>
-        <button id="btnRefresh" class="btn" title="Pull fresh places from OpenStreetMap">Refresh places</button>
-        <button id="btnName" class="btn rider-chip" title="Your rider name">…</button>
+        <button id="btnShare" class="btn btn-primary" title="Copy a link to this exact plan to text your group">Share trip</button>
+        <button id="btnGpx" class="btn" title="Download the route + chosen stops as a GPX file for your GPS app (works offline)">GPX</button>
+        <button id="btnRefresh" class="btn" title="Pull fresh gas/food/lodging from OpenStreetMap near the current map view">Refresh places</button>
+        <button id="btnName" class="btn rider-chip" title="Set your rider name — shows on votes and the riders list">…</button>
       </footer>
       <p class="attribution">
         Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors (ODbL) ·

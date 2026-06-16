@@ -174,20 +174,28 @@ export const RIDES = [
     endpointB: { name: 'Brasstown Bald summit parking, GA', lat: 34.8742, lon: -83.8108 },
   },
   {
+    // A true closed loop (TN-62 / TN-116 / TN-330) — endpointA == endpointB, the
+    // triangle corners as vias. Clockwise so TN-116 climbs Armes Gap uphill.
+    // OSRM-verified: 43.6 mi, passes 0.4 mi from Brushy Mountain (Petros).
     id: 'devils-triangle-116',
-    name: 'Devil’s Triangle (TN-116)',
-    road: 'TN-116',
-    region: 'East Tennessee (Cumberland Plateau, near Wartburg)',
+    name: 'Devil’s Triangle',
+    road: 'TN-62 / TN-116 / TN-330',
+    region: 'East Tennessee (Cumberland Plateau, NW of Oak Ridge)',
     difficulty: 'expert',
     curves: null,
     lengthMi: 44,
     nearDealsGapMi: 70,
     currentlyRideable: true,
-    blurb: 'The brutal heart of the 44-mile Devil’s Triangle loop, climbing Fork Mountain through the tight, guardrail-free "Devil’s Stairway" switchbacks at Armes Gap. Gravel patches, blind drop-offs and the odd coal truck make it more punishing than the Dragon.',
-    status: 'Open in 2026. On the Cumberland Plateau, well west of Helene’s zone. It’s a rough rural mountain road, not a maintained scenic route — expect gravel/debris, potholes, ATVs and occasional coal/log trucks; avoid in winter or heavy rain.',
-    endpointA: { name: 'TN-62 / TN-116 near Petros, TN', lat: 36.0820, lon: -84.4320 },
-    endpointB: { name: 'Caryville, TN (TN-116 at I-75)', lat: 36.2970, lon: -84.2190 },
-    via: [{ name: 'Armes Gap / "Devil’s Stairway"', lat: 36.1430, lon: -84.3140 }],
+    blurb: 'A 44-mile loop of TN-62, TN-116 and TN-330 around Frozen Head, climbing Fork Mountain through the tight, guardrail-free "Devil’s Stairway" switchbacks at Armes Gap, past the old Brushy Mountain prison in Petros. The TN-116 leg is as brutal as the Dragon, with deep rock gullies and rusty guardrails leaving no room for error.',
+    status: 'Open in 2026. On the Cumberland Plateau, well west of Helene’s zone. The TN-116 leg is a rough rural mountain road, not a maintained scenic route — expect gravel/debris, potholes, kids on ATVs and occasional coal/log trucks; avoid in winter or heavy rain.',
+    endpointA: { name: 'Schoolhouse Corner (TN-62 × TN-116)', lat: 36.07013, lon: -84.46201 },
+    endpointB: { name: 'Schoolhouse Corner (TN-62 × TN-116)', lat: 36.07013, lon: -84.46201 },
+    via: [
+      { name: 'Petros / Brushy Mountain (TN-116)', lat: 36.09521, lon: -84.44513 },
+      { name: 'Armes Gap — Devil’s Stairway (TN-116)', lat: 36.15305, lon: -84.25192 },
+      { name: 'Laurel Grove (TN-116 × TN-330)', lat: 36.11802, lon: -84.23245 },
+      { name: 'Oliver Springs (TN-330 × TN-62)', lat: 36.04707, lon: -84.34668 },
+    ],
   },
   {
     id: 'diamondback-226a',

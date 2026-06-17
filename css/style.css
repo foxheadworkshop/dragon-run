@@ -1022,6 +1022,8 @@ dialog menu { display: flex; justify-content: flex-end; margin: 14px 0 0; paddin
 .cr-split { display: flex; flex-wrap: wrap; gap: 5px; }
 .cr-split .sharer-chip { padding: 2px 8px; font-size: 11px; }
 .ce-empty { font-size: 12.5px; color: var(--ink-faint); font-style: italic; padding: 6px 0; }
+.ce-hint { font-size: 11.5px; color: var(--ink-faint); font-style: italic; }
+.cr-split .sharer-chip:not(.on) { opacity: .7; border-style: dashed; }
 
 /* ---------- offline / install ---------- */
 

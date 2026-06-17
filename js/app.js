@@ -17,7 +17,7 @@ import { sunTimes } from './sun.js';
 import { dayWeather } from './weather.js';
 import { initPwa } from './pwa.js';
 
-const DATA_V = '2026-06-17-1'; // bumped on data redeploys to bust the Pages CDN cache
+const DATA_V = '2026-06-17-2'; // bumped on data redeploys to bust the Pages CDN cache
 const HIGH_FT = 4500;          // elevation that triggers the cold/fog "pack layers" warning
 
 boot().catch((e) => {

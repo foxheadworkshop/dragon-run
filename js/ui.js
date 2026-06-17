@@ -60,7 +60,6 @@ export function createUI(cb) {
   let dragging = null;            // slider key being dragged
   const expanded = new Set();     // alternates lists left open across re-renders
   let costsMounted = false, rosterMounted = false;
-  let lastCostsKey = '';          // skip re-rendering the add-expense form mid-entry
   let pwa = null;                 // set by app via setPwa() once the SW glue is ready
 
   // ---- events ----
@@ -159,33 +158,20 @@ export function createUI(cb) {
     const addBtn = e.target.closest('#ce-add');
     if (addBtn) { submitExpense(); return; }
     const sh = e.target.closest('.sharer-chip');
-    if (sh) {
-      const form = sh.closest('.ce-form');
-      if (form) { sh.classList.toggle('on'); updateAddEnabled(); }
-      else cb.onToggleSharer(sh.dataset.exp, sh.dataset.uid);
-      return;
-    }
+    if (sh) { cb.onToggleSharer(sh.dataset.exp, sh.dataset.uid); return; }
     const del = e.target.closest('.ce-del');
     if (del) { cb.onDeleteExpense(del.dataset.exp); return; }
   });
 
+  // Post an expense with just the payer opted in; everyone else opts in afterward.
   function submitExpense() {
     const form = els.costsPanel.querySelector('.ce-form');
     if (!form) return;
     const title = form.querySelector('.ce-title').value.trim().slice(0, 60);
     const cents = parseUsd(form.querySelector('.ce-amount').value);
     const payer = form.querySelector('.ce-payer').value;
-    const sharers = [...form.querySelectorAll('.sharer-chip.on')].map((c) => c.dataset.uid);
     if (!cents) { showToast('Enter a dollar amount'); return; }
-    if (!sharers.length) { showToast('Pick who splits it'); return; }
-    cb.onAddExpense({ title: title || 'Expense', amountCents: cents, payer, sharers });
-    lastCostsKey = ''; // force form reset on next render
-  }
-  function updateAddEnabled() {
-    const form = els.costsPanel.querySelector('.ce-form');
-    if (!form) return;
-    const any = form.querySelector('.sharer-chip.on');
-    form.querySelector('#ce-add').disabled = !any;
+    cb.onAddExpense({ title: title || 'Expense', amountCents: cents, payer, sharers: [payer] });
   }
 
   els.btnShare.addEventListener('click', () => cb.onShare());
@@ -499,8 +485,8 @@ export function createUI(cb) {
         <input class="ce-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="$ amount">
         <label class="ce-payer-l">Paid by <select class="ce-payer">${roster.map((r) => `<option value="${esc(r.uid)}"${r.uid === state.rider.uid ? ' selected' : ''}>${esc(r.name || 'me')}</option>`).join('')}</select></label>
       </div>
-      <div class="ce-split"><span class="ce-split-l">Split between</span>${roster.map((r) => `<button class="sharer-chip on" data-uid="${esc(r.uid)}">${esc(r.name || 'rider')}</button>`).join('')}</div>
-      <button id="ce-add" class="btn btn-primary btn-small">Add expense</button>
+      <button id="ce-add" class="btn btn-primary btn-small">Post expense</button>
+      <div class="ce-hint">Posts with just the payer in. Everyone who shared taps to opt in below — it splits evenly among them.</div>
     </div>`;
 
     const expenses = Object.values(state.expenses || {}).sort((a, b) => b.createdAt - a.createdAt);

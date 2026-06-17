@@ -6,6 +6,10 @@
   <title>Dragon Run — Fredericksburg → Tail of the Dragon</title>
   <meta name="description" content="Group motorcycle trip planner: down the Blue Ridge Parkway to Deals Gap. Sliders for tank range, saddle time, and pace — gas, food, and lodging options live along the route.">
   <meta name="theme-color" content="#0e1014">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐉</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -26,7 +30,7 @@
     <aside id="panel">
       <header class="brand">
         <div class="brand-row">
-          <h1>Dragon&nbsp;Run</h1>
+          <h1>Dragon&nbsp;Run<span id="offlineDot" class="offline-dot" title="You're offline — using cached data"></span></h1>
           <div id="riders" class="riders" title="Riders online"></div>
         </div>
         <p class="tagline">Fredericksburg → Blue Ridge Pkwy → Tail of the Dragon</p>
@@ -46,10 +50,11 @@
         <p class="card-hint">Drag to replan — stops, fuel &amp; timing update live.</p>
         <div class="slider-row">
           <div class="slider-head">
-            <label for="sl-tank" title="Your bike's range on one tank of gas. Sets how far apart fuel stops can be — drop it for the thirstiest bike in the group.">Fuel range <i class="info" aria-hidden="true">i</i></label>
+            <label for="sl-tank" title="Your bike's range on one tank. The planner uses the thirstiest bike in the roster — flip Override to plan with this slider value instead.">Fuel range <i class="info" aria-hidden="true">i</i></label>
             <output id="out-tank" for="sl-tank">130<small> mi/tank</small></output>
           </div>
           <input type="range" id="sl-tank" min="80" max="250" step="5" value="130" aria-label="Fuel range in miles per tank">
+          <div class="fuel-note"><span id="fuelNote"></span><label class="override-toggle" title="Plan with the slider value instead of the roster's thirstiest bike"><input type="checkbox" id="fuelOverride"> override</label></div>
         </div>
         <div class="slider-row">
           <div class="slider-head">
@@ -96,6 +101,7 @@
           <button class="chip on" data-cat="lodging" title="Hotels, motels &amp; inns"><i class="dot dot-lodging"></i>Lodging</button>
           <button class="chip on" data-cat="camping" title="Campgrounds — also offered as overnight stops"><i class="dot dot-camping"></i>Camping</button>
           <button class="chip on" data-cat="rides" title="Famous motorcycle roads, drawn in magenta"><i class="dot dot-rides"></i>Rides</button>
+          <button class="chip on" data-cat="sights" title="Scenic overlooks, waterfalls, museums &amp; Deals Gap landmarks"><i class="dot dot-sights"></i>Sights</button>
           <button class="chip" data-cat="radar" title="Live NEXRAD precipitation radar overlay"><i class="dot dot-radar"></i>Radar</button>
           <div class="budget-row" title="Caps suggested hotels by typical brand price band ($ budget, $$ mid). Independents with unknown rates always show.">
             <span class="budget-lbl">Hotel budget</span>
@@ -106,9 +112,20 @@
         </div>
       </details>
 
+      <details class="collapse" id="cd-offline">
+        <summary>Offline &amp; install <span class="sum-note">ride with no signal</span></summary>
+        <div id="offlinePanel" class="offline-panel"></div>
+      </details>
+
       <section id="itinerary" aria-label="Itinerary"></section>
 
+      <section id="rosterPanel" aria-label="Riders and bikes"></section>
+
+      <section id="costsPanel" class="costs-panel" aria-label="Trip costs"></section>
+
       <section id="ridesPanel" class="rides-panel" aria-label="Famous rides"></section>
+
+      <section id="sightsPanel" class="sights-panel" aria-label="Sights along the route"></section>
 
       <footer class="actions">
         <button id="btnShare" class="btn btn-primary" title="Copy a link to this exact plan to text your group">Share trip</button>

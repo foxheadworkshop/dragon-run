@@ -6,6 +6,8 @@ import { GLYPHS, DAY_COLORS } from './map.js';
 import { CAT_LABEL, TIER_LABEL } from './poi.js';
 import { wxIcon } from './weather.js';
 import { DIFF_LABEL, DIFF_COLOR } from './rides.js';
+import { SIGHT_LABEL } from './sights.js';
+import { formatUsd, parseUsd, rosterFor, mySettlement } from './split.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -39,6 +41,13 @@ export function createUI(cb) {
     toggles: $('#toggles'),
     itinerary: $('#itinerary'),
     ridesPanel: $('#ridesPanel'),
+    sightsPanel: $('#sightsPanel'),
+    rosterPanel: $('#rosterPanel'),
+    costsPanel: $('#costsPanel'),
+    fuelOverride: $('#fuelOverride'),
+    fuelNote: $('#fuelNote'),
+    offlinePanel: $('#offlinePanel'),
+    offlineDot: $('#offlineDot'),
     riders: $('#riders'),
     btnShare: $('#btnShare'),
     btnGpx: $('#btnGpx'),
@@ -50,6 +59,9 @@ export function createUI(cb) {
 
   let dragging = null;            // slider key being dragged
   const expanded = new Set();     // alternates lists left open across re-renders
+  let costsMounted = false, rosterMounted = false;
+  let lastCostsKey = '';          // skip re-rendering the add-expense form mid-entry
+  let pwa = null;                 // set by app via setPwa() once the SW glue is ready
 
   // ---- events ----
 
@@ -107,6 +119,74 @@ export function createUI(cb) {
     const card = e.target.closest('.ride-card');
     if (card) cb.onFocusRide(card.dataset.ride);
   });
+  els.sightsPanel.addEventListener('click', (e) => {
+    const card = e.target.closest('.sight-card');
+    if (card) cb.onFocusSight(card.dataset.sight);
+  });
+
+  els.fuelOverride.addEventListener('change', () => cb.onFuelOverride(els.fuelOverride.checked));
+
+  els.offlinePanel.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn || !pwa) return;
+    if (btn.dataset.act === 'install') pwa.install();
+    else if (btn.dataset.act === 'update') pwa.update();
+    else if (btn.dataset.act === 'clear-tiles') pwa.clearTiles();
+  });
+
+  // ---- roster panel (event delegation) ----
+  els.rosterPanel.addEventListener('click', (e) => {
+    const add = e.target.closest('#rd-add');
+    if (add) { cb.onRiderAdd(); return; }
+    const del = e.target.closest('.rd-del');
+    if (del) { cb.onRiderRemove(del.dataset.uid); return; }
+    const rsvp = e.target.closest('[data-rsvp]');
+    if (rsvp) { cb.onRiderRsvp(rsvp.closest('[data-uid]').dataset.uid, rsvp.dataset.rsvp); return; }
+    const pin = e.target.closest('#stg-pin');
+    if (pin) { cb.onStagingPin(); return; }
+  });
+  els.rosterPanel.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.classList.contains('rd-name')) cb.onRiderEdit(t.dataset.uid, { name: t.value.slice(0, 40) });
+    else if (t.classList.contains('rd-bike')) cb.onRiderEdit(t.dataset.uid, { bike: t.value.slice(0, 60) });
+    else if (t.classList.contains('rd-tank-in')) cb.onRiderEdit(t.dataset.uid, { tankRangeMi: Math.max(60, Math.min(300, Number(t.value) || 130)) });
+    else if (t.classList.contains('stg-label')) cb.onStagingSet({ label: t.value.slice(0, 80) });
+    else if (t.classList.contains('stg-time')) cb.onStagingSet({ time: t.value });
+  });
+
+  // ---- costs panel (event delegation) ----
+  els.costsPanel.addEventListener('click', (e) => {
+    const addBtn = e.target.closest('#ce-add');
+    if (addBtn) { submitExpense(); return; }
+    const sh = e.target.closest('.sharer-chip');
+    if (sh) {
+      const form = sh.closest('.ce-form');
+      if (form) { sh.classList.toggle('on'); updateAddEnabled(); }
+      else cb.onToggleSharer(sh.dataset.exp, sh.dataset.uid);
+      return;
+    }
+    const del = e.target.closest('.ce-del');
+    if (del) { cb.onDeleteExpense(del.dataset.exp); return; }
+  });
+
+  function submitExpense() {
+    const form = els.costsPanel.querySelector('.ce-form');
+    if (!form) return;
+    const title = form.querySelector('.ce-title').value.trim().slice(0, 60);
+    const cents = parseUsd(form.querySelector('.ce-amount').value);
+    const payer = form.querySelector('.ce-payer').value;
+    const sharers = [...form.querySelectorAll('.sharer-chip.on')].map((c) => c.dataset.uid);
+    if (!cents) { showToast('Enter a dollar amount'); return; }
+    if (!sharers.length) { showToast('Pick who splits it'); return; }
+    cb.onAddExpense({ title: title || 'Expense', amountCents: cents, payer, sharers });
+    lastCostsKey = ''; // force form reset on next render
+  }
+  function updateAddEnabled() {
+    const form = els.costsPanel.querySelector('.ce-form');
+    if (!form) return;
+    const any = form.querySelector('.sharer-chip.on');
+    form.querySelector('#ce-add').disabled = !any;
+  }
 
   els.btnShare.addEventListener('click', () => cb.onShare());
   els.btnGpx.addEventListener('click', () => cb.onGpx());
@@ -148,6 +228,17 @@ export function createUI(cb) {
       `≈ <b>${Math.round(plan.totals.milesPerDay)} mi/day</b> · effective range ` +
       `<b>${Math.round(plan.totals.effRange)} mi</b> (${cfg.reservePct}% reserve) · ` +
       `<b>${plan.totals.fuelStops}</b> fuel stops this leg`;
+
+    // fuel-range source note + override checkbox
+    if (document.activeElement !== els.fuelOverride) els.fuelOverride.checked = !!cfg.fuelOverride;
+    if (cfg.fuelOverride) {
+      els.fuelNote.innerHTML = `<span class="fn-amber">manual override</span> — planning at ${cfg.tankRangeMi} mi`;
+    } else if (ctx.fuelSource === 'roster' && ctx.fuelBike) {
+      const who = ctx.fuelBike.uid === state.rider.uid ? 'your bike' : esc(ctx.fuelBike.name || 'a rider') + (ctx.fuelBike.bike ? ' · ' + esc(ctx.fuelBike.bike) : '');
+      els.fuelNote.innerHTML = `range set by <span class="fn-amber">${who}</span> (${ctx.effFuel} mi — thirstiest)`;
+    } else {
+      els.fuelNote.innerHTML = `set from the roster — add bikes below`;
+    }
 
     // tabs + preset
     for (const t of els.tabs.querySelectorAll('.tab')) {
@@ -193,8 +284,15 @@ export function createUI(cb) {
     // itinerary
     els.itinerary.innerHTML = plan.days.map((day, i) => dayCard(ctx, day, i, dateOffsets)).join('');
 
-    // riders + name chip
+    // roster + costs + offline
+    renderRoster(ctx);
+    renderCosts(ctx);
+    renderOffline(ctx);
+
+    // riders avatar strip — online only (within 5 min)
+    const now = Date.now();
     els.riders.innerHTML = (state.riders || [])
+      .filter((r) => !r.lastSeen || now - r.lastSeen < 5 * 60 * 1000)
       .slice(0, 8)
       .map((r) => `<span class="avatar" style="background:${r.color || '#9aa1ac'}" title="${esc(r.name || 'rider')}">${esc((r.name || '?')[0].toUpperCase())}</span>`)
       .join('');
@@ -266,7 +364,170 @@ export function createUI(cb) {
         `${s.fc.pop ? `<em>${s.fc.pop}%</em>` : ''}</span>`
       ).join('') + `</span>`;
     }
-    return `<div class="day-extras">${sun}${wx}</div>`;
+    return `<div class="day-extras">${sun}${wx}${elevSparkline(day.elev)}</div>`;
+  }
+
+  function elevSparkline(elev) {
+    if (!elev || elev.points.length < 2) return '';
+    const W = 240, H = 34, PAD = 2;
+    const xs = elev.points.map((p) => p[0]);
+    const minX = xs[0], maxX = xs[xs.length - 1], spanX = Math.max(1e-6, maxX - minX);
+    const lo = elev.minFt, hi = elev.maxFt, spanY = Math.max(1, hi - lo);
+    const px = (mi) => (PAD + ((mi - minX) / spanX) * (W - 2 * PAD)).toFixed(1);
+    const py = (ft) => (PAD + (1 - (ft - lo) / spanY) * (H - 2 * PAD)).toFixed(1);
+    const pts = elev.points.map((p) => `${px(p[0])},${py(p[1])}`);
+    const line = `M${pts.join(' L')}`;
+    const area = `M${px(minX)},${H} L${pts.join(' L')} L${px(maxX)},${H} Z`;
+    const hot = elev.maxFt >= 4500;
+    const stroke = hot ? 'var(--ember)' : 'var(--amber)';
+    return `<span class="day-elev" title="Elevation ${elev.minFt.toLocaleString()}–${elev.maxFt.toLocaleString()} ft · +${elev.gainFt.toLocaleString()} ft climb this day">
+      <svg class="elev-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <path d="${area}" fill="${stroke}" fill-opacity="0.13"></path>
+        <path d="${line}" fill="none" stroke="${stroke}" stroke-width="1.5" stroke-linejoin="round"></path>
+      </svg>
+      <span class="elev-stat">⛰ ${elev.maxFt.toLocaleString()}<small> ft · +${elev.gainFt.toLocaleString()} climb</small>${hot ? ' <span class="elev-hi">layers up</span>' : ''}</span>
+    </span>`;
+  }
+
+  // ---- sights panel (static, mounted once like rides) ----
+  function mountSights(sights) {
+    if (!sights || !sights.length) { els.sightsPanel.innerHTML = ''; return; }
+    const near = sights.filter((s) => s.nearDealsGapMi != null && s.nearDealsGapMi <= 25);
+    const along = sights.filter((s) => !(s.nearDealsGapMi != null && s.nearDealsGapMi <= 25));
+    const card = (s) => {
+      const t = s.tags || {};
+      const where = s.nearDealsGapMi != null && s.nearDealsGapMi < 1 ? 'at Deals Gap'
+        : s.nearDealsGapMi != null ? `${Math.round(s.nearDealsGapMi)} mi from base` : '';
+      return `<article class="sight-card sc-${s.cat}" data-sight="${esc(s.id)}" title="Tap to show on the map">
+        <div class="scname">${esc(s.name || SIGHT_LABEL[s.cat] || 'Sight')}</div>
+        <div class="scsub">${SIGHT_LABEL[s.cat] || ''}${where ? ' · ' + where : ''}</div>
+        ${t.description ? `<div class="scblurb">${esc(t.description)}</div>` : ''}
+      </article>`;
+    };
+    const group = (title, list) => list.length ? `<div class="sight-group">${title}</div>${list.map(card).join('')}` : '';
+    els.sightsPanel.innerHTML =
+      `<details class="collapse sights-collapse" id="cd-sights">
+        <summary><span class="sight-accent">◆</span> Sights <span class="count">${sights.length} stops worth a look</span></summary>
+        <div class="sights-body">${group('Around Deals Gap', near)}${group('Along the route', along)}</div>
+      </details>`;
+    wireCollapse(document.getElementById('cd-sights'));
+  }
+  function setSightsVisible(on) { els.sightsPanel.hidden = !on; }
+
+  function setPwa(p) { pwa = p; }
+
+  function renderOffline(ctx) {
+    const { state } = ctx;
+    els.offlineDot.classList.toggle('show', !!state.offline);
+    const rows = [];
+    rows.push(`<div class="off-row"><span class="off-status ${state.offline ? 'off-off' : 'off-ok'}">${state.offline ? '● Offline — using saved data' : '● Online'}</span></div>`);
+    if (pwa?.updateReady || state.swUpdate) rows.push(`<div class="off-row"><button class="btn btn-small btn-primary" data-act="update">Update now</button> <span>A newer version is ready.</span></div>`);
+    if (pwa?.installable && !pwa.isStandalone?.()) rows.push(`<div class="off-row"><button class="btn btn-small btn-primary" data-act="install">Install app</button> <span>Add to your home screen.</span></div>`);
+    rows.push(`<div class="off-row">Route, places, rides &amp; sights are saved on this device, so the planner opens with no signal — perfect for Deals Gap. Map tiles cache as you pan around.</div>`);
+    rows.push(`<div class="off-row"><button class="btn btn-small" data-act="clear-tiles">Clear cached tiles</button></div>`);
+    els.offlinePanel.innerHTML = rows.join('');
+  }
+
+  // ---- riders & bikes ----
+  const rsvpRank = (r) => ({ in: 0, maybe: 1, out: 2 }[r.rsvp] ?? 0);
+
+  function renderRoster(ctx) {
+    const { state, fuelBike } = ctx;
+    // don't stomp an input the user is editing
+    if (rosterMounted && els.rosterPanel.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
+    const roster = [...state.roster].sort((a, b) =>
+      (a.uid === state.rider.uid ? -1 : b.uid === state.rider.uid ? 1 : 0) ||
+      rsvpRank(a) - rsvpRank(b) || (Number(a.tankRangeMi) - Number(b.tankRangeMi)));
+    const inCount = roster.filter((r) => r.rsvp === 'in').length;
+    const setterUid = state.cfg.fuelOverride ? null : fuelBike?.uid;
+    const stg = state.staging || {};
+    const rows = roster.map((r) => {
+      const isSelf = r.uid === state.rider.uid;
+      const setsRange = r.uid === setterUid;
+      const seg = ['in', 'maybe', 'out'].map((v) =>
+        `<button data-rsvp="${v}" class="${r.rsvp === v ? 'on' : ''}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('');
+      return `<div class="rider-row${setsRange ? ' sets-range' : ''}" data-uid="${esc(r.uid)}">
+        <span class="avatar" style="background:${r.color || '#9aa1ac'}">${esc((r.name || '?')[0].toUpperCase())}</span>
+        <input class="rd-name" data-uid="${esc(r.uid)}" value="${esc(r.name)}" placeholder="Name" maxlength="40">
+        <input class="rd-bike" data-uid="${esc(r.uid)}" value="${esc(r.bike)}" placeholder="Bike (e.g. KTM 790)" maxlength="60">
+        <label class="rd-tank"><input type="number" class="rd-tank-in" data-uid="${esc(r.uid)}" min="60" max="300" step="5" value="${Math.round(r.tankRangeMi)}"><small>mi</small></label>
+        <div class="rsvp seg" data-uid="${esc(r.uid)}">${seg}</div>
+        ${setsRange ? '<span class="range-badge" title="Thirstiest bike — sets the group fuel range">⛽ sets range</span>' : ''}
+        ${isSelf ? '<span class="you-tag">you</span>' : `<button class="rd-del" data-uid="${esc(r.uid)}" title="Remove">×</button>`}
+      </div>`;
+    }).join('');
+    const body = `<div class="roster-body">${rows}
+      <button id="rd-add" class="btn btn-small">+ Add a bike</button>
+      <div class="staging">
+        <label>Meetup <input class="stg-label" value="${esc(stg.label || '')}" placeholder="QuikTrip on Plank Rd"></label>
+        <label>Time <input type="time" class="stg-time" value="${esc(stg.time || '')}"></label>
+        <button id="stg-pin" class="btn btn-small">${stg.lat != null ? 'Move pin 📍' : 'Drop pin on map'}</button>
+      </div></div>`;
+    const note = `${inCount} in · thirstiest sets fuel`;
+    if (!rosterMounted) {
+      els.rosterPanel.innerHTML = `<details class="collapse" id="cd-roster"><summary>Riders &amp; bikes <span class="sum-note">${note}</span></summary>${body}</details>`;
+      wireCollapse(document.getElementById('cd-roster'));
+      rosterMounted = true;
+    } else {
+      const sn = els.rosterPanel.querySelector('#cd-roster > summary .sum-note');
+      if (sn) sn.textContent = note;
+      const bodyEl = els.rosterPanel.querySelector('.roster-body');
+      if (bodyEl) bodyEl.outerHTML = body;
+    }
+  }
+
+  // ---- trip costs ----
+  function renderCosts(ctx) {
+    const { state, costs } = ctx;
+    if (!costs) return;
+    if (costsMounted && els.costsPanel.contains(document.activeElement) && ['INPUT', 'SELECT'].includes(document.activeElement.tagName)) return;
+    const roster = costs.roster;
+    const nameOf = (uid) => roster.find((r) => r.uid === uid)?.name || 'rider';
+    const colorOf = (uid) => roster.find((r) => r.uid === uid)?.color || '#9aa1ac';
+    const myBal = costs.myBalance;
+    const mine = mySettlement(costs.transfers, state.rider.uid);
+
+    const settle = (mine.iOwe.length || mine.owedToMe.length)
+      ? [...mine.iOwe.map((t) => `<div class="settle owe"><span class="sdot" style="background:${colorOf(t.uid)}"></span>You owe <b>${esc(nameOf(t.uid))}</b> <span class="amt">${formatUsd(t.amountCents)}</span></div>`),
+         ...mine.owedToMe.map((t) => `<div class="settle owed"><span class="sdot" style="background:${colorOf(t.uid)}"></span><b>${esc(nameOf(t.uid))}</b> owes you <span class="amt">${formatUsd(t.amountCents)}</span></div>`)].join('')
+      : `<div class="settle ok">You're all settled up 🤝</div>`;
+    const headline = `<div class="cost-net ${myBal >= 0 ? 'up' : 'down'}">${myBal === 0 ? 'Settled up' : myBal > 0 ? `You're owed ${formatUsd(myBal)}` : `You owe ${formatUsd(-myBal)}`}</div>`;
+
+    const form = `<div class="ce-form">
+      <input class="ce-title" maxlength="60" placeholder="What was it? (Hotel, dinner…)">
+      <div class="ce-row">
+        <input class="ce-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="$ amount">
+        <label class="ce-payer-l">Paid by <select class="ce-payer">${roster.map((r) => `<option value="${esc(r.uid)}"${r.uid === state.rider.uid ? ' selected' : ''}>${esc(r.name || 'me')}</option>`).join('')}</select></label>
+      </div>
+      <div class="ce-split"><span class="ce-split-l">Split between</span>${roster.map((r) => `<button class="sharer-chip on" data-uid="${esc(r.uid)}">${esc(r.name || 'rider')}</button>`).join('')}</div>
+      <button id="ce-add" class="btn btn-primary btn-small">Add expense</button>
+    </div>`;
+
+    const expenses = Object.values(state.expenses || {}).sort((a, b) => b.createdAt - a.createdAt);
+    const list = expenses.length ? expenses.map((e) => {
+      const n = e.sharers.length || 1;
+      const per = Math.round(e.amountCents / n);
+      const chips = roster.map((r) => `<button class="sharer-chip ${e.sharers.includes(r.uid) ? 'on' : ''}${r.uid === state.rider.uid ? ' me' : ''}" data-exp="${esc(e.id)}" data-uid="${esc(r.uid)}" title="${e.sharers.includes(r.uid) ? 'In — tap to drop' : 'Out — tap to join'}">${esc(r.name || 'rider')}</button>`).join('');
+      const del = e.createdBy === state.rider.uid ? `<button class="ce-del" data-exp="${esc(e.id)}" title="Delete">🗑</button>` : '';
+      return `<div class="cost-row">
+        <div class="cr-head"><span class="cr-title">${esc(e.title)}</span><span class="cr-amt">${formatUsd(e.amountCents)}</span></div>
+        <div class="cr-meta">paid by ${esc(e.payerName || nameOf(e.payer))} · split ${n} ${n === 1 ? 'way' : 'ways'} · ${formatUsd(per)} each ${del}</div>
+        <div class="cr-split">${chips}</div>
+      </div>`;
+    }).join('') : `<div class="ce-empty">No expenses yet — add the first one above.</div>`;
+
+    const note = myBal === 0 ? 'settled up' : myBal > 0 ? `you're owed ${formatUsd(myBal)}` : `you owe ${formatUsd(-myBal)}`;
+    const body = `<div class="costs-body">${headline}<div class="settle-list">${settle}</div>${form}<div class="cost-list">${list}</div></div>`;
+    if (!costsMounted) {
+      els.costsPanel.innerHTML = `<details class="collapse" id="cd-costs"><summary>💵 Trip costs <span class="count">${note}</span></summary>${body}</details>`;
+      wireCollapse(document.getElementById('cd-costs'));
+      costsMounted = true;
+    } else {
+      const cn = els.costsPanel.querySelector('#cd-costs > summary .count');
+      if (cn) cn.textContent = note;
+      const bodyEl = els.costsPanel.querySelector('.costs-body');
+      if (bodyEl) bodyEl.outerHTML = body;
+    }
   }
 
   function stopRow(ctx, day, s, key) {
@@ -326,7 +587,7 @@ export function createUI(cb) {
     });
   }
 
-  return { render, mountRides, setRidesVisible, askName, isDragging: () => dragging !== null };
+  return { render, mountRides, setRidesVisible, mountSights, setSightsVisible, setPwa, askName, isDragging: () => dragging !== null };
 }
 
 // Remember whether a <details class="collapse"> is open across reloads.

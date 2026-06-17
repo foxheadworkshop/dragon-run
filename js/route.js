@@ -19,6 +19,8 @@ export function reverseRoute(route, name) {
     builtAt: route.builtAt,
     coords: [...route.coords].reverse(),
     cum: route.cum.map((c) => total - c).reverse(),
+    ele: route.ele ? [...route.ele].reverse() : undefined,
+    eleSource: route.eleSource,
     brp: route.brp
       ? { startMile: r1(total - route.brp.endMile), endMile: r1(total - route.brp.startMile) }
       : null,

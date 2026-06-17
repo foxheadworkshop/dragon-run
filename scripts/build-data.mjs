@@ -15,7 +15,7 @@ import {
   haversineMi, cumulativeMiles, pointAtMile, simplifyIndices,
   buildGridIndex, projectToRoute,
 } from '../js/geo.js';
-import { BRP_ANCHORS, POINTS, RETURN_FAST_ANCHORS, CLOSURES, ADVISORIES } from './waypoints.mjs';
+import { BRP_ANCHORS, POINTS, RETURN_FAST_ANCHORS, CLOSURES, ADVISORIES, DEALS_GAP_BBOX, DEALS_GAP_SIGHTS } from './waypoints.mjs';
 import { RIDES } from './rides.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -32,6 +32,15 @@ const OVERPASS_HOSTS = [
 
 const PIN_SPACING_MI = 5;
 const CORRIDOR_M = 8047; // 5 mi
+const SIGHT_CORRIDOR_M = 4828; // 3 mi — tighter than POIs to keep the sights file lean
+
+// Elevation: USGS 3DEP 10m via OpenTopoData (free, no key, US). 100 loc/req, 1/s, 1000/day.
+const M_PER_FT = 0.3048;
+const ELEV_HOST = 'https://api.opentopodata.org';
+const ELEV_DATASET = 'ned10m';
+const ELEV_BATCH = 100;
+const ELEV_GAP_MS = 1100;
+const ELEV_SOURCE = 'USGS 3DEP 10m via OpenTopoData (ned10m) · public domain';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const round = (x, d) => Math.round(x * 10 ** d) / 10 ** d;
@@ -295,7 +304,36 @@ function stitch(phases) {
   return { coords, dists, joints };
 }
 
-function finalizeRoute({ id, name, coords, dists, jointMiles, anchors, spanMarkers }) {
+// Sample integer-feet elevation at each coord (kept vertices), batched + cached.
+async function sampleElevationsFt(coords, label) {
+  const out = new Array(coords.length).fill(null);
+  for (let s = 0; s < coords.length; s += ELEV_BATCH) {
+    const batch = coords.slice(s, s + ELEV_BATCH);
+    const locs = batch.map(([lat, lon]) => `${round(lat, 6)},${round(lon, 6)}`).join('|');
+    const url = `${ELEV_HOST}/v1/${ELEV_DATASET}?locations=${encodeURIComponent(locs)}`;
+    const json = await cachedJson('elev:' + url, async () => {
+      await throttled(ELEV_GAP_MS);
+      const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(60_000) });
+      const j = await res.json().catch(() => null);
+      if (!res.ok || j?.status !== 'OK') throw new Error(`OpenTopoData ${j?.status || res.status} (${label})`);
+      return j;
+    }, (j) => j?.status === 'OK' && Array.isArray(j.results) && j.results.length === batch.length);
+    json.results.forEach((r, i) => { out[s + i] = r.elevation == null ? null : Math.round(r.elevation / M_PER_FT); });
+    console.log(`    elev ${label}: ${Math.min(s + ELEV_BATCH, coords.length)}/${coords.length}`);
+  }
+  fillNulls(out);
+  return out;
+}
+
+function fillNulls(arr) {
+  let last = null;
+  for (let i = 0; i < arr.length; i++) if (arr[i] != null) { last = arr[i]; break; }
+  if (last == null) return false; // all null — caller drops `ele`
+  for (let i = 0; i < arr.length; i++) { if (arr[i] == null) arr[i] = last; else last = arr[i]; }
+  return true;
+}
+
+async function finalizeRoute({ id, name, coords, dists, jointMiles, anchors, spanMarkers }) {
   const cum = [0];
   for (let i = 0; i < dists.length; i++) cum.push(cum[i] + dists[i] / 1609.344);
   const totalMi = cum[cum.length - 1];
@@ -322,6 +360,15 @@ function finalizeRoute({ id, name, coords, dists, jointMiles, anchors, spanMarke
   });
 
   const keep = simplifyIndices(coords, 15, 250);
+  const keptCoords = keep.map((i) => [round(coords[i][0], 5), round(coords[i][1], 5)]);
+  let ele = null;
+  try {
+    ele = await sampleElevationsFt(keptCoords, id);
+    if (ele.length !== keptCoords.length) throw new Error('elevation length mismatch');
+  } catch (e) {
+    console.log(`  ! elevation sampling failed for ${id}: ${e.message} — route ships without ele`);
+    ele = null;
+  }
   const json = {
     id, name,
     totalMi: round(totalMi, 1),
@@ -331,8 +378,9 @@ function finalizeRoute({ id, name, coords, dists, jointMiles, anchors, spanMarke
     detours: projectSpans(spanMarkers?.detours),
     advisories: projectSpans(spanMarkers?.advisories),
     anchors: outAnchors,
-    coords: keep.map((i) => [round(coords[i][0], 5), round(coords[i][1], 5)]),
+    coords: keptCoords,
     cum: keep.map((i) => round(cum[i], 3)),
+    ...(ele ? { ele, eleSource: ELEV_SOURCE } : {}),
   };
   const file = path.join(DATA_DIR, `route-${id === 'out' ? 'outbound' : 'return-fast'}.json`);
   fs.writeFileSync(file, JSON.stringify(json));
@@ -469,7 +517,7 @@ async function stepRoutes() {
     (a) => !closedSpans.some((s) => a.mp >= s.fromMp - 1 && a.mp <= s.toMp + 1)
   );
 
-  const outJson = finalizeRoute({
+  const outJson = await finalizeRoute({
     id: 'out',
     name: 'Outbound — Blue Ridge Parkway',
     coords: out.coords,
@@ -492,7 +540,7 @@ async function stepRoutes() {
     POINTS.fredericksburg,
   ]);
   console.log(`    ${round(R.totalM / 1609.344, 1)} mi`);
-  const retJson = finalizeRoute({
+  const retJson = await finalizeRoute({
     id: 'retFast',
     name: 'Return — fastest (I-81)',
     coords: R.coords,
@@ -692,6 +740,172 @@ async function stepRides() {
   console.log(`  wrote rides.json: ${out.length} rides, ${Math.round(fs.statSync(file).size / 1024)} KB`);
 }
 
+// ---------- step: elevation (cheap re-sample of existing route JSON) ----------
+
+async function stepElevation() {
+  console.log('== step: elevation');
+  for (const f of ['route-outbound.json', 'route-return-fast.json']) {
+    const p = path.join(DATA_DIR, f);
+    const r = JSON.parse(fs.readFileSync(p, 'utf8'));
+    const ele = await sampleElevationsFt(r.coords, r.id);
+    if (ele.length !== r.coords.length) { console.log(`  ! ${f}: length mismatch — skipped`); continue; }
+    r.ele = ele;
+    r.eleSource = ELEV_SOURCE;
+    fs.writeFileSync(p, JSON.stringify(r));
+    const lo = Math.min(...ele), hi = Math.max(...ele);
+    console.log(`  ${f}: ${ele.length} elevations, ${lo}–${hi} ft`);
+  }
+}
+
+// ---------- step: sights (scenic & attraction POIs) ----------
+
+const SIGHT_CATS = ['waterfall', 'viewpoint', 'museum', 'historic', 'attraction', 'park'];
+
+function sightCatFor(tags = {}) {
+  const { tourism, historic, natural, waterway, leisure, man_made, boundary } = tags;
+  if (natural === 'waterfall' || waterway === 'waterfall') return 'waterfall';
+  if (tourism === 'viewpoint') return 'viewpoint';
+  if (tourism === 'museum') return 'museum';
+  if (historic && !['no', 'tomb', 'boundary_stone', 'milestone'].includes(historic)) return 'historic';
+  if (tourism === 'attraction' || tourism === 'artwork' || man_made === 'tower' || man_made === 'lighthouse') return 'attraction';
+  if (leisure === 'park' || leisure === 'nature_reserve' || boundary === 'national_park') return 'park';
+  return null;
+}
+
+async function stepSights() {
+  console.log('== step: sights');
+  const routes = ['route-outbound.json', 'route-return-fast.json'].map((f) =>
+    JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), 'utf8'))
+  );
+  const elements = new Map();
+
+  // exact-match historic values (index-backed, fast — regex over the broad
+  // `historic` key is what timed out on dense corridor chunks).
+  const HISTORIC_VALS = ['memorial', 'monument', 'ruins', 'castle', 'fort', 'battlefield', 'aircraft', 'locomotive', 'ship'];
+  // Corridor: only the cheap, high-value scenic tags (no historic — too dense/slow
+  // along 600 mi). Node-only; sights render as points.
+  const CORRIDOR_QL = (LINE) => `[out:json][timeout:50];(
+node['tourism'~'^(viewpoint|attraction|museum)$'](around:${SIGHT_CORRIDOR_M},${LINE});
+node['natural'='waterfall'](around:${SIGHT_CORRIDOR_M},${LINE});
+);out qt;`;
+  // Deals Gap area: the full set incl. historic (one bounded query).
+  const BBOX_QL = (BB) => `[out:json][timeout:90];(
+node['tourism'~'^(viewpoint|attraction|museum|artwork)$'](${BB});
+node['natural'='waterfall'](${BB});
+${HISTORIC_VALS.map((v) => `node['historic'='${v}']['name'](${BB});`).join('\n')}
+);out qt;`;
+
+  // 1) corridor sweep — small chunks; skip any chunk that won't come back.
+  for (const route of routes) {
+    const keepIdx = simplifyIndices(route.coords, 800, Infinity);
+    const line = keepIdx.map((i) => route.coords[i]);
+    const chunks = [];
+    for (let s = 0; s < line.length - 1; s += 7) chunks.push(line.slice(s, Math.min(s + 8, line.length)));
+    console.log(`  ${route.id}: corridor ${line.length} pts -> ${chunks.length} chunks`);
+    for (const [ci, chunk] of chunks.entries()) {
+      const LINE = chunk.map((p) => `${p[0]},${p[1]}`).join(',');
+      try {
+        const res = await overpass(CORRIDOR_QL(LINE), `sights ${route.id} ${ci + 1}/${chunks.length}`, { allowEmpty: true });
+        for (const el of res.elements || []) elements.set(el.type[0] + el.id, el);
+        console.log(`    chunk ${ci + 1}/${chunks.length}: ${res.elements?.length ?? 0} (total ${elements.size})`);
+      } catch (e) {
+        console.log(`    chunk ${ci + 1}/${chunks.length}: SKIPPED (${e.message})`);
+      }
+    }
+  }
+  // 2) Deals Gap area bbox sweep (off-corridor landmarks + historic)
+  const bb = DEALS_GAP_BBOX.join(',');
+  try {
+    const bres = await overpass(BBOX_QL(bb), 'sights deals-gap bbox', { allowEmpty: true });
+    for (const el of bres.elements || []) elements.set(el.type[0] + el.id, el);
+    console.log(`  deals-gap bbox: ${bres.elements?.length ?? 0} (total ${elements.size})`);
+  } catch (e) {
+    console.log(`  deals-gap bbox: SKIPPED (${e.message})`);
+  }
+
+  // project + classify
+  const routeIdx = routes.map((r) => ({ id: r.id, gi: buildGridIndex(r.coords), cum: r.cum }));
+  const baseLat = 35.4688, baseLon = -83.9176;
+  const sights = [];
+  for (const [key, el] of elements) {
+    const lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
+    if (lat == null) continue;
+    const cat = sightCatFor(el.tags);
+    if (!cat) continue;
+    const t = el.tags || {};
+    if ((cat === 'historic' || cat === 'park') && !t.name) continue;
+    const routesProj = {};
+    for (const ri of routeIdx) {
+      const pr = projectToRoute(ri.gi, ri.cum, lat, lon, 5);
+      if (pr) routesProj[ri.id] = { m: round(pr.mile, 1), o: round(pr.offMi, 2) };
+    }
+    const near = haversineMi(lat, lon, baseLat, baseLon);
+    const nearDealsGapMi = near <= 30 ? round(near, 1) : null;
+    if (!Object.keys(routesProj).length && nearDealsGapMi == null) continue;
+    sights.push({
+      id: key,
+      name: t.name || null,
+      cat,
+      sub: t.tourism || t.historic || t.natural || t.leisure || cat,
+      lat: round(lat, 5), lon: round(lon, 5),
+      routes: routesProj,
+      nearDealsGapMi,
+      tags: Object.fromEntries(
+        ['website', 'wikipedia', 'description', 'fee', 'opening_hours']
+          .filter((k) => t[k]).map((k) => [k, String(t[k]).slice(0, 200)])
+      ),
+    });
+  }
+  // merge curated Deals Gap landmarks (win on proximity dedupe)
+  for (const c of DEALS_GAP_SIGHTS) {
+    const dup = sights.find((s) => haversineMi(s.lat, s.lon, c.lat, c.lon) < 0.12);
+    if (dup) sights.splice(sights.indexOf(dup), 1);
+    const routesProj = {};
+    for (const ri of routeIdx) {
+      const pr = projectToRoute(ri.gi, ri.cum, c.lat, c.lon, 5);
+      if (pr) routesProj[ri.id] = { m: round(pr.mile, 1), o: round(pr.offMi, 2) };
+    }
+    sights.push({ ...c, routes: routesProj, nearDealsGapMi: round(haversineMi(c.lat, c.lon, baseLat, baseLon), 1), tags: c.tags || {} });
+  }
+  console.log(`  ${sights.length} sights classified`);
+
+  // thin: always keep Deals Gap area; cap corridor buckets by notability
+  const anchorPts = BRP_ANCHORS.map((a) => [a.lat, a.lon]);
+  const score = (s) => (s.tags?.wikipedia ? 2 : 0) + (s.tags?.website ? 1 : 0) +
+    (anchorPts.some((p) => haversineMi(s.lat, s.lon, p[0], p[1]) < 0.5) ? 1 : 0) +
+    (String(s.id).startsWith('cur-') ? 5 : 0);
+  const keep = new Set();
+  for (const c of DEALS_GAP_SIGHTS) keep.add(c.id); // curated landmarks always show
+  for (const s of sights) if (s.nearDealsGapMi != null && s.nearDealsGapMi <= 25) keep.add(s.id);
+  for (const ri of routeIdx) {
+    const buckets = new Map();
+    for (const s of sights) {
+      const pr = s.routes[ri.id]; if (!pr) continue;
+      const b = `${s.cat}:${Math.floor(pr.m / 10)}`;
+      if (!buckets.has(b)) buckets.set(b, []);
+      buckets.get(b).push(s);
+    }
+    for (const [b, list] of buckets) {
+      const cap = b.startsWith('viewpoint') ? 4 : b.startsWith('waterfall') ? 5 : 3;
+      list.sort((a, c) => score(c) - score(a) || (c.name ? 1 : 0) - (a.name ? 1 : 0) || a.routes[ri.id].o - c.routes[ri.id].o);
+      list.slice(0, cap).forEach((s) => keep.add(s.id));
+    }
+  }
+  const finalSights = sights.filter((s) => keep.has(s.id));
+  const counts = {};
+  for (const s of finalSights) counts[s.cat] = (counts[s.cat] || 0) + 1;
+  console.log(`  kept ${finalSights.length}:`, counts);
+  console.log(`  Tree of Shame present: ${finalSights.some((s) => s.id === 'cur-tree-of-shame')}`);
+
+  const file = path.join(DATA_DIR, 'sights.json');
+  fs.writeFileSync(file, JSON.stringify({
+    builtAt: new Date().toISOString().slice(0, 10),
+    source: 'Overpass / OSM corridor · © OpenStreetMap contributors (ODbL)',
+    sights: finalSights,
+  }));
+  console.log(`  wrote sights.json: ${finalSights.length} sights, ${Math.round(fs.statSync(file).size / 1024)} KB`);
+}
+
 // ---------- CLI ----------
 
 const args = process.argv.slice(2);
@@ -702,6 +916,8 @@ try {
   if (step === 'routes' || step === 'all') await stepRoutes();
   if (step === 'pois' || step === 'all') await stepPois();
   if (step === 'rides' || step === 'all') await stepRides();
+  if (step === 'sights' || step === 'all') await stepSights();
+  if (step === 'elevation') await stepElevation();
   if (args.includes('--audit') && !['routes', 'all'].includes(step)) {
     audit(JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'route-outbound.json'), 'utf8')));
   }

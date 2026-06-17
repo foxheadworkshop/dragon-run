@@ -66,6 +66,29 @@ export const CLOSURES = [
 
 export const ADVISORIES = [];
 
+// Sights (scenic/attraction POIs) — bbox around the Deals Gap base camp for the
+// off-corridor area sweep, plus hand-curated landmarks Overpass may miss/mistag.
+// [minLat, minLon, maxLat, maxLon]
+export const DEALS_GAP_BBOX = [35.30, -84.20, 35.78, -83.30];
+
+export const DEALS_GAP_SIGHTS = [
+  { id: 'cur-tree-of-shame', name: 'Tree of Shame', cat: 'attraction', sub: 'attraction',
+    lat: 35.46637, lon: -83.92106,
+    tags: { description: 'The legendary tree at Deals Gap hung with broken bike parts from Dragon wrecks — the spot for a humbling photo.' } },
+  { id: 'cur-fontana-dam', name: 'Fontana Dam', cat: 'attraction', sub: 'attraction',
+    lat: 35.45160, lon: -83.80270,
+    tags: { description: 'Tallest dam in the eastern US (480 ft), with a visitor center and overlook on NC-28 / Moonshiner 28.' } },
+  { id: 'cur-wheels-through-time', name: 'Wheels Through Time Museum', cat: 'museum', sub: 'museum',
+    lat: 35.51900, lon: -83.10100,
+    tags: { description: 'Maggie Valley museum of rare American motorcycles — most of them still run. A must-stop for riders.', website: 'https://wheelsthroughtime.com' } },
+  { id: 'cur-brushy-mountain', name: 'Brushy Mountain State Penitentiary', cat: 'historic', sub: 'prison',
+    lat: 36.08580, lon: -84.26470,
+    tags: { description: 'Decommissioned 1896 prison (once held James Earl Ray) on the Devil’s Triangle loop — tours, restaurant & distillery.' } },
+  { id: 'cur-us129-overlook', name: 'US-129 Overlook (Tabcat)', cat: 'viewpoint', sub: 'viewpoint',
+    lat: 35.51560, lon: -83.98990,
+    tags: { description: 'Pull-off near the north end of the Tail of the Dragon over Calderwood Lake — classic photo spot.' } },
+];
+
 export const RETURN_FAST_ANCHORS = [
   { name: 'Base camp — 561 Deals Gap Rd', key: 'baseCamp' },
   { name: 'Deals Gap',       key: 'dealsGap' },

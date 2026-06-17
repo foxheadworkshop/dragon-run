@@ -1,0 +1,15 @@
+{
+  "name": "Dragon Run — Motorcycle Trip Planner",
+  "short_name": "Dragon Run",
+  "description": "Plan and coordinate a group motorcycle trip down the Blue Ridge Parkway to the Tail of the Dragon — works offline.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e1014",
+  "theme_color": "#0e1014",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

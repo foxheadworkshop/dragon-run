@@ -48,6 +48,48 @@ export function pointAtMile(route, mi) {
   return [aLat + (bLat - aLat) * t, aLon + (bLon - aLon) * t];
 }
 
+// Per-span elevation summary from the parallel cum/ele arrays. Returns
+// { minFt, maxFt, startFt, endFt, gainFt, points:[[mile,ft]] } or null.
+export function elevationForSpan(route, mi0, mi1) {
+  const { cum, ele } = route;
+  if (!ele || !cum || ele.length !== cum.length) return null;
+  const total = cum[cum.length - 1];
+  mi0 = Math.max(0, Math.min(mi0, total));
+  mi1 = Math.max(mi0, Math.min(mi1, total));
+  const eleAtMile = (mi) => {
+    if (mi <= 0) return ele[0];
+    if (mi >= total) return ele[ele.length - 1];
+    let i = lowerBound(cum, mi);
+    if (cum[i] === mi) return ele[i];
+    i = Math.max(1, i);
+    const span = cum[i] - cum[i - 1];
+    const t = span > 0 ? (mi - cum[i - 1]) / span : 0;
+    return ele[i - 1] + (ele[i] - ele[i - 1]) * t;
+  };
+  const pts = [[mi0, eleAtMile(mi0)]];
+  let i = lowerBound(cum, mi0);
+  if (cum[i] === mi0) i++;
+  for (; i < cum.length && cum[i] < mi1; i++) pts.push([cum[i], ele[i]]);
+  pts.push([mi1, eleAtMile(mi1)]);
+  if (pts.length < 2) return null;
+  let minFt = Infinity, maxFt = -Infinity;
+  for (const [, ft] of pts) { if (ft < minFt) minFt = ft; if (ft > maxFt) maxFt = ft; }
+  // Cumulative climb with a hysteresis filter so 10-m DEM jitter between adjacent
+  // sample points doesn't accumulate into a wildly inflated "gain".
+  const THRESH = 40; // ft
+  let gainFt = 0, ref = pts[0][1];
+  for (let k = 1; k < pts.length; k++) {
+    const ft = pts[k][1];
+    if (ft >= ref + THRESH) { gainFt += ft - ref; ref = ft; }
+    else if (ft < ref) { ref = ft; }
+  }
+  return {
+    minFt: Math.round(minFt), maxFt: Math.round(maxFt),
+    startFt: Math.round(pts[0][1]), endFt: Math.round(pts[pts.length - 1][1]),
+    gainFt: Math.round(gainFt), points: pts,
+  };
+}
+
 // Coords between two mile marks, with interpolated endpoints. mi0 < mi1.
 export function sliceCoords(route, mi0, mi1) {
   const { coords, cum } = route;

@@ -3,6 +3,7 @@
 
 import { sliceCoords, pointAtMile } from './geo.js';
 import { mileToBrpMp } from './route.js';
+import { SIGHT_GLYPHS } from './sights.js';
 
 export const DAY_COLORS = ['#ff5d3b', '#ffb02e', '#41c7a6', '#5fa8ff', '#c792ea', '#ff7ab2', '#9ccc65', '#ffd54f'];
 
@@ -29,6 +30,8 @@ export function createMap(el, handlers) {
   const closures = L.layerGroup().addTo(map);
   const flags = L.layerGroup().addTo(map);
   const rideMarkers = L.layerGroup().addTo(map);
+  const sightLayer = L.layerGroup().addTo(map);
+  const staging = L.layerGroup().addTo(map);
   const chosenLayer = L.layerGroup().addTo(map);
   const highlight = L.layerGroup().addTo(map);
   const cluster = L.markerClusterGroup({
@@ -45,7 +48,10 @@ export function createMap(el, handlers) {
   let open = null; // { marker, entry } of the open popup
   let radarLayer = null, radarTimer = null;
   let ridesVisible = true;
+  let sightsVisible = true;
   const rideRefs = new Map(); // id -> { line, casing, marker }
+  const sightRefs = new Map(); // id -> marker
+  let pointPicker = null;
 
   const MOTO_GLYPH = '<svg viewBox="0 0 24 24" fill="#16130c"><path d="M19.44 9.03 15.41 5H11v2h3.59l2 2H5c-2.8 0-5 2.2-5 5s2.2 5 5 5c2.46 0 4.45-1.69 4.9-4h1.65l2.77-2.77c-.21.54-.32 1.14-.32 1.77 0 2.8 2.2 5 5 5s5-2.2 5-5c0-2.65-1.97-4.77-4.56-4.97zM7.82 15C7.4 16.15 6.28 17 5 17c-1.65 0-3-1.35-3-3s1.35-3 3-3c1.28 0 2.4.85 2.82 2H5v2h2.82zM19 17c-1.65 0-3-1.35-3-3s1.35-3 3-3 3 1.35 3 3-1.35 3-3 3z"/></svg>';
 
@@ -93,6 +99,14 @@ export function createMap(el, handlers) {
       iconSize: [28, 28],
       iconAnchor: [14, 14],
       popupAnchor: [0, -14],
+    });
+  }
+
+  function sightIcon(s) {
+    return L.divIcon({
+      className: 'sight-pin',
+      html: `<div class="spin sp-${s.cat}">${SIGHT_GLYPHS[s.cat] || SIGHT_GLYPHS.attraction}</div>`,
+      iconSize: [24, 24], iconAnchor: [12, 22], popupAnchor: [0, -20],
     });
   }
 
@@ -213,11 +227,12 @@ export function createMap(el, handlers) {
     },
 
     focusMile(route, mile, zoom = 11) {
-      map.flyTo(pointAtMile(route, mile), zoom, { duration: 0.6 });
+      // setView, not flyTo — flyTo's flight math throws NaN on some transitions.
+      map.setView(pointAtMile(route, mile), zoom, { animate: true });
     },
 
     focusEntry(entry, zoom = 13) {
-      map.flyTo([entry.poi.lat, entry.poi.lon], zoom, { duration: 0.6 });
+      map.setView([entry.poi.lat, entry.poi.lon], zoom, { animate: true });
     },
 
     pulse(entry) {
@@ -298,8 +313,47 @@ export function createMap(el, handlers) {
       }
     },
 
+    setSights(entries) {
+      sightLayer.clearLayers();
+      sightRefs.clear();
+      for (const { s } of entries) {
+        const m = L.marker([s.lat, s.lon], { icon: sightIcon(s), zIndexOffset: 600 });
+        m.bindPopup(() => handlers.sightPopupHtml(s), { maxWidth: 270, className: 'dr-popup' });
+        m.bindTooltip(s.name || '', { direction: 'top' });
+        m.addTo(sightLayer);
+        sightRefs.set(s.id, m);
+      }
+      applySightsVisibility();
+    },
+    toggleSights(on) { sightsVisible = on; applySightsVisibility(); },
+    focusSight(s) {
+      if (!s) return;
+      map.setView([s.lat, s.lon], 13, { animate: true });
+      sightRefs.get(s.id)?.openPopup();
+    },
+
+    setStaging(stg) {
+      staging.clearLayers();
+      if (!stg || stg.lat == null) return;
+      L.marker([stg.lat, stg.lon], {
+        icon: L.divIcon({ className: 'staging-pin', html: `<div class="stg">📍</div>`, iconSize: [30, 30], iconAnchor: [15, 28] }),
+        zIndexOffset: 1100,
+      }).bindTooltip(`Meetup${stg.label ? ': ' + stg.label : ''}${stg.time ? ' · ' + stg.time : ''}`, { direction: 'top' }).addTo(staging);
+    },
+    pickPoint(cb) {
+      if (pointPicker) map.off('click', pointPicker);
+      el.style.cursor = 'crosshair';
+      pointPicker = (e) => { el.style.cursor = ''; map.off('click', pointPicker); pointPicker = null; cb(e.latlng); };
+      map.once('click', pointPicker);
+    },
+
     invalidate() { setTimeout(() => map.invalidateSize(), 260); },
   };
+
+  function applySightsVisibility() {
+    if (sightsVisible) { if (!map.hasLayer(sightLayer)) map.addLayer(sightLayer); }
+    else map.removeLayer(sightLayer);
+  }
 
   function applyRidesVisibility() {
     if (ridesVisible) {

@@ -10,12 +10,14 @@ import { randomId } from './state.js';
 const FB = 'https://www.gstatic.com/firebasejs/11.6.1';
 const ONLINE_WINDOW_MS = 5 * 60 * 1000;
 
-export async function createSync({ tripId, rider, onRemote, getSnapshot }) {
+export async function createSync({ tripId, rider, onRemote, getSnapshot, getRider }) {
   if (!firebaseConfig) {
     return {
       mode: 'local', tripId: null, uid: rider.uid,
       saveConfig() {}, savePicks() {},
       async toggleVote() { return false; },
+      pushRider() {},
+      saveExpense() {}, async deleteExpense() { return false; },
       heartbeat() {},
       async createSharedTrip() { return null; },
       dispose() {},
@@ -80,22 +82,38 @@ export async function createSync({ tripId, rider, onRemote, getSnapshot }) {
       onRemote({ votes });
     }, (e) => console.warn('votes listener', e)));
 
+    // Emit ALL declared riders (with bike fields) — the roster keeps a rider's
+    // declared bike even after they go offline; the avatar strip applies the
+    // online window itself.
     unsubs.push(onSnapshot(collection(db, 'trips', id, 'riders'), (qs) => {
       const now = Date.now();
       const riders = [];
       qs.forEach((rd) => {
         const r = rd.data();
         const seen = r.lastSeen?.toMillis?.() ?? now; // pending serverTimestamp -> treat as now
-        if (now - seen < ONLINE_WINDOW_MS) riders.push({ uid: rd.id, name: r.name, color: r.color, lastSeen: seen });
+        riders.push({
+          uid: rd.id, name: r.name, color: r.color, lastSeen: seen,
+          bike: r.bike || '', tankRangeMi: r.tankRangeMi, rsvp: r.rsvp || 'in',
+        });
       });
       onRemote({ riders });
     }, (e) => console.warn('riders listener', e)));
 
+    unsubs.push(onSnapshot(collection(db, 'trips', id, 'expenses'), (qs) => {
+      const expenses = {};
+      qs.forEach((ed) => { expenses[ed.id] = { id: ed.id, ...ed.data() }; });
+      onRemote({ expenses });
+    }, (e) => console.warn('expenses listener', e)));
+
     const beat = () => {
       if (document.visibilityState !== 'visible') return;
+      const me = getRider ? getRider() : rider; // {name,color,bike,tankRangeMi,rsvp}
       setDoc(doc(db, 'trips', id, 'riders', uid), {
-        name: rider.name || 'rider',
-        color: rider.color || '#9aa1ac',
+        name: me.name || rider.name || 'rider',
+        color: me.color || rider.color || '#9aa1ac',
+        bike: me.bike || '',
+        tankRangeMi: Number(me.tankRangeMi) || 130,
+        rsvp: me.rsvp || 'in',
         lastSeen: serverTimestamp(),
       }).catch(() => {});
     };
@@ -131,6 +149,25 @@ export async function createSync({ tripId, rider, onRemote, getSnapshot }) {
         else await setDoc(ref, { poiId, uid, name: rider.name || 'rider', at: Date.now() });
         return true;
       } catch (e) { console.warn('vote', e); return false; }
+    },
+
+    // Push the local rider's bike/rsvp instantly (don't wait for the 60s heartbeat).
+    pushRider(partial) {
+      if (!api.tripId) return;
+      const ref = doc(db, 'trips', api.tripId, 'riders', uid);
+      updateDoc(ref, partial).catch(() => setDoc(ref, partial, { merge: true }).catch(() => {}));
+    },
+
+    saveExpense(e) {
+      if (!api.tripId) return;
+      const { id, ...data } = e;
+      setDoc(doc(db, 'trips', api.tripId, 'expenses', id), data).catch((err) => console.warn('saveExpense', err));
+    },
+
+    async deleteExpense(id) {
+      if (!api.tripId) return false;
+      try { await deleteDoc(doc(db, 'trips', api.tripId, 'expenses', id)); return true; }
+      catch (e) { console.warn('deleteExpense', e); return false; }
     },
 
     heartbeat() {},

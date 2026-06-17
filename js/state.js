@@ -5,7 +5,7 @@ const LS_KEY = 'dragon-run-v1';
 // The group's planned departure. Stored snapshots older than CFG_V are migrated
 // onto this date so everyone's app moves together when the plan changes.
 const TRIP_START = '2026-06-19';
-const CFG_V = 2;
+const CFG_V = 3; // bumped for roster/staging (v2→v3)
 
 export const DEFAULTS = {
   cfg: {
@@ -19,8 +19,9 @@ export const DEFAULTS = {
     returnPreset: 'brp', // 'brp' | 'fast'
     includeCamping: true,
     maxTier: 0, // lodging budget cap: 0 = any, 1 = $, 2 = $$
+    fuelOverride: false, // when true, use the slider tank value instead of the roster minimum (local-only, never synced)
   },
-  toggles: { fuel: true, food: true, lodging: true, camping: true, rides: true, radar: false },
+  toggles: { fuel: true, food: true, lodging: true, camping: true, rides: true, sights: true, radar: false },
   picks: {
     out: { fuel: [], lodging: {}, lunch: {} },
     ret: { fuel: [], lodging: {}, lunch: {} },
@@ -29,6 +30,8 @@ export const DEFAULTS = {
   tripId: null,
   dir: 'out', // 'out' | 'ret'
 };
+
+export const FUEL_MIN = 60, FUEL_MAX = 300;
 
 export function createStore() {
   let saved = null;
@@ -44,10 +47,16 @@ export function createStore() {
     rider: { ...DEFAULTS.rider, ...(saved?.rider || {}) },
     tripId: saved?.tripId || null,
     dir: 'out',
+    // durable additions:
+    roster: Array.isArray(saved?.roster) ? saved.roster : [],   // [{uid,name,bike,tankRangeMi,color,rsvp}]
+    staging: saved?.staging || null,                            // {label, lat?, lon?, time?}
+    expenses: normalizeExpenses(saved?.expenses),               // {id: Expense} — persisted only in local mode
     // volatile (not persisted):
     votes: {},   // poiId -> { count, mine, names[] }
     riders: [],  // [{ uid, name, color, lastSeen }]
     syncMode: 'local',
+    offline: typeof navigator !== 'undefined' ? !navigator.onLine : false,
+    swUpdate: false,
   };
   if (!state.rider.uid) {
     state.rider.uid = randomId(12);
@@ -61,8 +70,12 @@ export function createStore() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       try {
-        const { cfg, toggles, picks, rider, tripId } = state;
-        localStorage.setItem(LS_KEY, JSON.stringify({ v: CFG_V, cfg, toggles, picks, rider, tripId }));
+        const { cfg, toggles, picks, rider, tripId, roster, staging, expenses, syncMode } = state;
+        const base = { v: CFG_V, cfg, toggles, picks, rider, tripId, roster, staging };
+        // Expenses live in Firestore when synced; only persist them locally in treasurer mode
+        // so a Firebase trip doesn't carry a stale copy that fights the live snapshot.
+        if (syncMode !== 'firebase') base.expenses = expenses;
+        localStorage.setItem(LS_KEY, JSON.stringify(base));
       } catch { /* private mode / quota — in-memory state still works */ }
     }, 250);
   }
@@ -95,6 +108,58 @@ export function normalizePicks(picks) {
     out: { ...empty(), ...(picks?.out || {}) },
     ret: { ...empty(), ...(picks?.ret || {}) },
   };
+}
+
+// Sanitize a saved/synced expense map into the canonical shape. Money is integer cents.
+export function normalizeExpenses(raw) {
+  const out = {};
+  if (raw && typeof raw === 'object') {
+    for (const [id, e] of Object.entries(raw)) {
+      if (!e || typeof e !== 'object') continue;
+      const amountCents = Math.round(Number(e.amountCents) || 0);
+      const sharers = Array.isArray(e.sharers) ? [...new Set(e.sharers.filter(Boolean))] : [];
+      if (amountCents <= 0 || !e.payer || !sharers.length) continue;
+      out[id] = {
+        id,
+        title: String(e.title || '').slice(0, 60),
+        amountCents,
+        payer: String(e.payer),
+        payerName: String(e.payerName || '').slice(0, 40),
+        sharers,
+        createdBy: String(e.createdBy || e.payer),
+        createdAt: Number(e.createdAt) || Date.now(),
+        updatedAt: Number(e.updatedAt) || Number(e.createdAt) || Date.now(),
+      };
+    }
+  }
+  return out;
+}
+
+// Ensure the local rider has a roster entry (so they appear and their bike counts).
+export function ensureSelfInRoster(state) {
+  const me = state.rider;
+  if (!me?.uid) return false;
+  let entry = state.roster.find((r) => r.uid === me.uid);
+  if (!entry) {
+    entry = { uid: me.uid, name: me.name || 'Me', bike: '', tankRangeMi: state.cfg.tankRangeMi, color: me.color, rsvp: 'in' };
+    state.roster.push(entry);
+    return true;
+  }
+  if (me.name && entry.name !== me.name) { entry.name = me.name; return true; }
+  return false;
+}
+
+// Effective fuel range for planning: the thirstiest (smallest) tank in the roster,
+// unless the local rider has flipped the manual override (then use the slider value).
+export function effectiveFuelRange(state) {
+  const slider = state.cfg.tankRangeMi;
+  if (state.cfg.fuelOverride) return { range: slider, source: 'slider', bike: null };
+  const tanks = (state.roster || [])
+    .map((r) => ({ t: Number(r.tankRangeMi), r }))
+    .filter((x) => x.t >= FUEL_MIN && x.t <= FUEL_MAX);
+  if (!tanks.length) return { range: slider, source: 'slider', bike: null };
+  const min = tanks.reduce((a, b) => (b.t < a.t ? b : a));
+  return { range: min.t, source: 'roster', bike: min.r };
 }
 
 export function randomId(len = 16) {

@@ -472,12 +472,24 @@ export function createUI(cb) {
     const colorOf = (uid) => roster.find((r) => r.uid === uid)?.color || '#9aa1ac';
     const myBal = costs.myBalance;
     const mine = mySettlement(costs.transfers, state.rider.uid);
-
+    // When a debtor's payment to me is less than their full debt, it's because the
+    // rest goes to another person who's also owed — surface that so the number makes sense.
+    const otherPays = (debtorUid) => {
+      const others = costs.transfers.filter((t) => t.from === debtorUid && t.to !== state.rider.uid);
+      return others.length ? ` <span class="settle-also">· also pays ${others.map((t) => esc(nameOf(t.to)) + ' ' + formatUsd(t.amountCents)).join(', ')}</span>` : '';
+    };
     const settle = (mine.iOwe.length || mine.owedToMe.length)
       ? [...mine.iOwe.map((t) => `<div class="settle owe"><span class="sdot" style="background:${colorOf(t.uid)}"></span>You owe <b>${esc(nameOf(t.uid))}</b> <span class="amt">${formatUsd(t.amountCents)}</span></div>`),
-         ...mine.owedToMe.map((t) => `<div class="settle owed"><span class="sdot" style="background:${colorOf(t.uid)}"></span><b>${esc(nameOf(t.uid))}</b> owes you <span class="amt">${formatUsd(t.amountCents)}</span></div>`)].join('')
+         ...mine.owedToMe.map((t) => `<div class="settle owed"><span class="sdot" style="background:${colorOf(t.uid)}"></span><b>${esc(nameOf(t.uid))}</b> owes you <span class="amt">${formatUsd(t.amountCents)}</span>${otherPays(t.uid)}</div>`)].join('')
       : `<div class="settle ok">You're all settled up 🤝</div>`;
     const headline = `<div class="cost-net ${myBal >= 0 ? 'up' : 'down'}">${myBal === 0 ? 'Settled up' : myBal > 0 ? `You're owed ${formatUsd(myBal)}` : `You owe ${formatUsd(-myBal)}`}</div>`;
+
+    // Everyone's net balance (the ground truth: what each rider paid − their share).
+    const balRows = [...costs.balances.entries()].filter(([, c]) => c !== 0).sort((a, b) => b[1] - a[1])
+      .map(([uid, c]) => `<div class="bal-row"><span class="sdot" style="background:${colorOf(uid)}"></span><span class="bal-name">${uid === state.rider.uid ? 'You' : esc(nameOf(uid))}</span><span class="bal-amt ${c >= 0 ? 'up' : 'down'}">${c >= 0 ? '+' : '−'}${formatUsd(Math.abs(c))}</span></div>`).join('');
+    const balances = balRows
+      ? `<div class="cost-section-l">Everyone's balance</div><div class="bal-list">${balRows}</div><div class="bal-note">balance = what they paid − their share of the expenses they joined. Positive = owed money.</div>`
+      : '';
 
     const form = `<div class="ce-form">
       <input class="ce-title" maxlength="60" placeholder="What was it? (Hotel, dinner…)">
@@ -503,7 +515,9 @@ export function createUI(cb) {
     }).join('') : `<div class="ce-empty">No expenses yet — add the first one above.</div>`;
 
     const note = myBal === 0 ? 'settled up' : myBal > 0 ? `you're owed ${formatUsd(myBal)}` : `you owe ${formatUsd(-myBal)}`;
-    const body = `<div class="costs-body">${headline}<div class="settle-list">${settle}</div>${form}<div class="cost-list">${list}</div></div>`;
+    const body = `<div class="costs-body">${headline}` +
+      `<div class="cost-section-l">Settle up <span class="cost-section-sub">simplest payments</span></div>` +
+      `<div class="settle-list">${settle}</div>${balances}${form}<div class="cost-list">${list}</div></div>`;
     if (!costsMounted) {
       els.costsPanel.innerHTML = `<details class="collapse" id="cd-costs"><summary>💵 Trip costs <span class="count">${note}</span></summary>${body}</details>`;
       wireCollapse(document.getElementById('cd-costs'));

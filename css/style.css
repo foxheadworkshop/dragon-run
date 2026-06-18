@@ -989,11 +989,26 @@ dialog menu { display: flex; justify-content: flex-end; margin: 14px 0 0; paddin
 .cost-net { font-family: var(--font-display); font-weight: 700; font-size: 22px; letter-spacing: .03em; }
 .cost-net.up { color: var(--ok); } .cost-net.down { color: var(--ember); }
 .settle-list { margin: 4px 0 10px; }
-.settle { display: flex; align-items: center; gap: 7px; font-size: 13px; padding: 3px 0; }
+.settle { display: flex; align-items: center; gap: 7px; font-size: 13px; padding: 3px 0; flex-wrap: wrap; }
 .settle .sdot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
 .settle .amt { font-weight: 600; margin-left: auto; }
 .settle.owe .amt { color: var(--ember); } .settle.owed .amt { color: var(--ok); }
 .settle.ok { color: var(--ink-dim); }
+.settle-also { flex-basis: 100%; padding-left: 16px; font-size: 11px; color: var(--ink-faint); }
+
+.cost-section-l {
+  font-family: var(--font-display); font-weight: 700; font-size: 13px;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint);
+  margin: 10px 0 5px;
+}
+.cost-section-sub { font-family: var(--font-body); font-weight: 500; font-size: 10.5px; letter-spacing: 0; text-transform: none; color: var(--ink-faint); }
+.bal-list { margin-bottom: 4px; }
+.bal-row { display: flex; align-items: center; gap: 7px; font-size: 13px; padding: 2px 0; }
+.bal-row .sdot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.bal-name { color: var(--ink-dim); }
+.bal-amt { margin-left: auto; font-weight: 600; }
+.bal-amt.up { color: var(--ok); } .bal-amt.down { color: var(--ember); }
+.bal-note { font-size: 10.5px; color: var(--ink-faint); font-style: italic; margin-bottom: 8px; }
 
 .ce-form {
   background: linear-gradient(180deg, var(--bg2), #181c24); border: 1px solid var(--line);

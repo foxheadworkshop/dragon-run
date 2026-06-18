@@ -46,7 +46,7 @@ export function createMap(el, handlers) {
   }).addTo(map);
 
   let open = null; // { marker, entry } of the open popup
-  let radarLayer = null, radarTimer = null;
+  let radarLayers = [], radarAnim = null, radarRefresh = null, radarFrame = 0, radarControl = null;
   let ridesVisible = true;
   let sightsVisible = true;
   const rideRefs = new Map(); // id -> { line, casing, marker }
@@ -55,14 +55,34 @@ export function createMap(el, handlers) {
 
   const MOTO_GLYPH = '<svg viewBox="0 0 24 24" fill="#16130c"><path d="M19.44 9.03 15.41 5H11v2h3.59l2 2H5c-2.8 0-5 2.2-5 5s2.2 5 5 5c2.46 0 4.45-1.69 4.9-4h1.65l2.77-2.77c-.21.54-.32 1.14-.32 1.77 0 2.8 2.2 5 5 5s5-2.2 5-5c0-2.65-1.97-4.77-4.56-4.97zM7.82 15C7.4 16.15 6.28 17 5 17c-1.65 0-3-1.35-3-3s1.35-3 3-3c1.28 0 2.4.85 2.82 2H5v2h2.82zM19 17c-1.65 0-3-1.35-3-3s1.35-3 3-3 3 1.35 3 3-1.35 3-3 3z"/></svg>';
 
-  function makeRadarLayer() {
-    // NEXRAD base-reflectivity composite, server-refreshed ~5 min; the bucketed
-    // query param busts the browser tile cache when we redraw.
-    const bucket = Math.floor(Date.now() / 300_000);
+  // NEXRAD composite frames: 50 min of history in 10-min steps, then current ('').
+  // IEM serves time-lagged layers as nexrad-n0q-900913-mNNm (free, no key).
+  const RADAR_OFFSETS = ['-m50m', '-m40m', '-m30m', '-m20m', '-m10m', ''];
+  const RADAR_MINS = [50, 40, 30, 20, 10, 0];
+
+  function makeRadarFrame(suffix) {
+    const bucket = Math.floor(Date.now() / 300_000); // bust browser cache each 5 min
     return L.tileLayer(
-      `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?_=${bucket}`,
-      { opacity: 0.55, maxZoom: 19, attribution: 'Radar: Iowa Environmental Mesonet' }
+      `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913${suffix}/{z}/{x}/{y}.png?_=${bucket}`,
+      { opacity: 0, maxZoom: 19, zIndex: 250, attribution: 'Radar: Iowa Environmental Mesonet' }
     );
+  }
+
+  function buildRadarFrames() {
+    radarLayers.forEach((l) => map.removeLayer(l));
+    radarLayers = RADAR_OFFSETS.map((s) => makeRadarFrame(s).addTo(map));
+    radarFrame = 0;
+  }
+
+  function showRadarFrame(i) {
+    radarFrame = i;
+    radarLayers.forEach((l, j) => l.setOpacity(j === i ? 0.6 : 0));
+    if (!radarControl) return;
+    const el = radarControl.getContainer();
+    const mins = RADAR_MINS[i];
+    el.querySelector('.rc-when').textContent = mins === 0 ? 'now' : `−${mins} min`;
+    const c = map.getCenter();
+    el.querySelector('.rc-link').href = `https://weather.com/weather/radar/interactive/l/${c.lat.toFixed(2)},${c.lng.toFixed(2)}`;
   }
 
   function poiIcon(cat, chosen = false) {
@@ -248,19 +268,34 @@ export function createMap(el, handlers) {
     },
 
     setRadar(on) {
-      clearInterval(radarTimer);
-      radarTimer = null;
+      clearInterval(radarAnim); radarAnim = null;
+      clearInterval(radarRefresh); radarRefresh = null;
       if (!on) {
-        if (radarLayer) map.removeLayer(radarLayer);
-        radarLayer = null;
+        radarLayers.forEach((l) => map.removeLayer(l));
+        radarLayers = [];
+        if (radarControl) { map.removeControl(radarControl); radarControl = null; }
         return;
       }
-      if (!radarLayer) radarLayer = makeRadarLayer().addTo(map);
-      radarTimer = setInterval(() => {
-        const old = radarLayer;
-        radarLayer = makeRadarLayer().addTo(map);
-        setTimeout(() => old && map.removeLayer(old), 1500); // overlap to avoid flicker
-      }, 300_000);
+      // on-map control: frame time + a weather.com deep link for the viewed area
+      radarControl = L.control({ position: 'bottomleft' });
+      radarControl.onAdd = () => {
+        const div = L.DomUtil.create('div', 'radar-ctl');
+        L.DomEvent.disableClickPropagation(div);
+        div.innerHTML = '<span class="rc-title">🌧 Radar loop</span><span class="rc-when">…</span>' +
+          '<a class="rc-link" target="_blank" rel="noopener" title="Open this area on weather.com">weather.com ↗</a>';
+        return div;
+      };
+      radarControl.addTo(map);
+
+      buildRadarFrames();
+      showRadarFrame(0);
+      // animate older → now, looping; longer dwell on the latest frame.
+      radarAnim = setInterval(() => {
+        const next = (radarFrame + 1) % radarLayers.length;
+        showRadarFrame(next);
+      }, 650);
+      // rebuild frames every 5 min so the loop stays current
+      radarRefresh = setInterval(buildRadarFrames, 300_000);
     },
 
     setRides(rides) {

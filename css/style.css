@@ -1049,6 +1049,23 @@ dialog menu { display: flex; justify-content: flex-end; margin: 14px 0 0; paddin
 .brand .offline-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); margin-left: 6px; display: none; box-shadow: 0 0 6px var(--warn); }
 .brand .offline-dot.show { display: inline-block; }
 
+/* ---------- animated radar control ---------- */
+
+.radar-ctl {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(20, 23, 29, .92);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--ink-dim);
+  box-shadow: 0 2px 10px rgb(0 0 0 / .5);
+}
+.radar-ctl .rc-title { color: #7fd4ff; font-weight: 600; }
+.radar-ctl .rc-when { font-family: var(--font-display); font-weight: 700; color: var(--ink); min-width: 46px; text-align: center; }
+.radar-ctl .rc-link { color: var(--amber); text-decoration: none; font-weight: 600; }
+.radar-ctl .rc-link:hover { text-decoration: underline; }
+
 @media (max-width: 460px) {
   .elev-svg { width: 84px; } .elev-stat small { display: none; }
   .roster-body .staging .stg-label { width: 100%; }

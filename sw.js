@@ -7,7 +7,7 @@
 // never bulk-prefetched — that's what the OSM tile usage policy permits. Do NOT add
 // a "download region" button that loops tile requests; that would violate the policy.
 
-const VERSION = '2026-06-19-1';
+const VERSION = '2026-06-20-1';
 const SHELL = `dr-shell-${VERSION}`;
 const TILES = 'dr-tiles-v1';        // not version-scoped — tiles are long-lived
 const RUNTIME = `dr-runtime-${VERSION}`;

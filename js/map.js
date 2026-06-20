@@ -34,6 +34,7 @@ export function createMap(el, handlers) {
   const staging = L.layerGroup().addTo(map);
   const chosenLayer = L.layerGroup().addTo(map);
   const highlight = L.layerGroup().addTo(map);
+  const rejoinLayer = L.layerGroup().addTo(map); // dashed connector back to the route when off it
   const meLayer = L.layerGroup().addTo(map);    // live GPS location
   const aheadLayer = L.layerGroup().addTo(map);  // "ride ahead" projected point
   const cluster = L.markerClusterGroup({
@@ -177,10 +178,13 @@ export function createMap(el, handlers) {
       `<button class="ah-step" data-dir="-1" title="Less time" aria-label="Less time">−</button>` +
       `<span class="ah-dur">1h</span>` +
       `<button class="ah-step" data-dir="1" title="More time" aria-label="More time">+</button></div>` +
-      `<button class="ah-read" aria-live="polite" title="Fly to that spot on the route">tap ⌖ to locate</button>`;
+      `<button class="ah-read" aria-live="polite" title="Fly to that spot on the route">tap ⌖ to locate</button>` +
+      `<div class="ah-rejoin hidden" aria-live="polite"></div>` +
+      `<button class="ah-frame" title="Fit the whole route and your position on screen">Frame me + route</button>`;
     div.addEventListener('click', (e) => {
       const step = e.target.closest('.ah-step');
       if (step) { handlers.onAheadStep?.(Number(step.dataset.dir)); return; }
+      if (e.target.closest('.ah-frame')) { handlers.onFrameRoute?.(); return; }
       if (e.target.closest('.ah-read')) handlers.onAheadFocus?.();
     });
     aheadCtl = div;
@@ -501,6 +505,36 @@ export function createMap(el, handlers) {
     },
 
     focusAhead(point) { if (point) map.setView(point, Math.max(map.getZoom() || 0, 11), { animate: true }); },
+
+    // Dashed connector from the rider to the nearest point on the route ("rejoin the parkway").
+    // info: { from:[lat,lon], to:[lat,lon], distMi, bearing, mp, mile } | null to clear.
+    setRejoin(info) {
+      rejoinLayer.clearLayers();
+      const row = aheadCtl?.querySelector('.ah-rejoin');
+      if (!info) { row?.classList.add('hidden'); return; }
+      L.polyline([info.from, info.to], { color: '#ffcf5c', weight: 3, opacity: 0.95, dashArray: '3 7', interactive: false }).addTo(rejoinLayer);
+      L.circleMarker(info.to, { radius: 6, color: '#ffcf5c', weight: 3, fillColor: '#1a1205', fillOpacity: 0.9, interactive: false }).addTo(rejoinLayer);
+      if (row) {
+        const where = info.mp != null ? `near MP ${Math.round(info.mp)}` : `near mi ${Math.round(info.mile)}`;
+        row.textContent = `↩ Rejoin: ${info.distMi.toFixed(1)} mi ${info.bearing} · ${where}`;
+        row.classList.remove('hidden');
+      }
+    },
+
+    // "Frame me + route": fit the WHOLE active route plus the rider's dot on screen. Route
+    // geometry has many points so the bounds are never degenerate (no single-point zoom jump).
+    frameMeAndRoute(fix, route) {
+      const pts = (route?.coords || []).slice();
+      if (fix) pts.push([fix.lat, fix.lon]);
+      if (!pts.length) return;
+      const panel = document.getElementById('panel');
+      const sheet = panel && getComputedStyle(panel).position === 'fixed';
+      map.fitBounds(L.latLngBounds(pts), {
+        paddingTopLeft: [30, 30],
+        paddingBottomRight: sheet ? [20, Math.min(panel.offsetHeight + 20, innerHeight * 0.5)] : [30, 30],
+        animate: true,
+      });
+    },
 
     invalidate() { setTimeout(() => map.invalidateSize(), 260); },
   };

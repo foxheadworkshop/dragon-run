@@ -82,6 +82,10 @@ export function computePlan(cfg, idx, picks = {}) {
   const milesPerDay = cfg.hoursPerDay * cfg.avgMph;
   const cum = idx.route.cum;
   const total = cum[cum.length - 1];
+  // Resume point for "continue from here": plan only the REMAINING route from here.
+  // Defaults to 0 (whole trip). Clamped so a stale/garbage value can never misplan.
+  const fromMile = Math.min(Math.max(Number(cfg.fromMile) || 0, 0), total);
+  const remaining = total - fromMile;
   const lodgingCats = cfg.includeCamping ? ['lodging', 'camping'] : ['lodging'];
   // Budget cap: keep lodging at or under cfg.maxTier ($=1, $$=2). Unknown-tier
   // independents (0) always pass — no rate data is not the same as expensive.
@@ -89,7 +93,7 @@ export function computePlan(cfg, idx, picks = {}) {
 
   // ---- 1. day boundaries + overnight lodging ----
   const days = [];
-  let startMile = 0, d = 0;
+  let startMile = fromMile, d = 0;
   while (startMile < total - 1e-6 && d < 14) {
     let targetEnd = Math.min(startMile + milesPerDay, total);
     if (total - targetEnd <= 0.05 * milesPerDay) targetEnd = total; // absorb trailing sliver
@@ -156,7 +160,7 @@ export function computePlan(cfg, idx, picks = {}) {
   if ((picks.fuel || []).length > pickQueue.length) {
     warnings.push({ code: 'STALE_PICK', msg: 'Some fuel picks no longer exist in the data and were ignored.' });
   }
-  let lastFill = 0, pq = 0, guard = 0;
+  let lastFill = fromMile, pq = 0, guard = 0; // resume assumes a full tank at fromMile
   while (lastFill + effRange < total - 1e-6 && guard++ < 40) {
     const limit = lastFill + effRange;
     while (pq < pickQueue.length && pickQueue[pq].m <= lastFill + 1e-6) pq++;
@@ -251,10 +255,12 @@ export function computePlan(cfg, idx, picks = {}) {
     days,
     fuelLegs,
     totals: {
-      miles: total,
+      miles: remaining,    // REMAINING distance from fromMile (== total on a full plan)
+      totalMiles: total,   // absolute route length (use this for "whole trip" displays)
+      fromMile,            // resume point (0 on a full plan)
       ridingDays: days.length,
       fuelStops: fuelLegs.length,
-      rideHrs: total / cfg.avgMph,
+      rideHrs: remaining / cfg.avgMph,
       milesPerDay,
       effRange,
     },

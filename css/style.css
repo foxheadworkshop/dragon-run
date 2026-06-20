@@ -866,6 +866,8 @@ dialog menu { display: flex; justify-content: flex-end; margin: 14px 0 0; paddin
     box-shadow: 0 -12px 40px rgb(0 0 0 / .55);
   }
   #panel.expanded { height: 88dvh; }
+  /* Minimized: collapse to a thin bar (brand + riders peek) so the map/route fills the screen. */
+  #panel.min { height: 92px; overflow: hidden; }
 
   .sheet-handle {
     display: block;
@@ -882,6 +884,7 @@ dialog menu { display: flex; justify-content: flex-end; margin: 14px 0 0; paddin
     transition: bottom .25s ease;
   }
   #panel.expanded ~ .sheet-handle, .sheet-handle.up { bottom: calc(88dvh - 14px); }
+  .sheet-handle.down { bottom: calc(92px - 14px); }
   .sheet-handle span {
     display: block;
     width: 26px; height: 4px;
@@ -895,6 +898,8 @@ dialog menu { display: flex; justify-content: flex-end; margin: 14px 0 0; paddin
   .stat .v { font-size: 21px; }
   .actions .btn { padding: 10px 12px; }
   .leaflet-control-zoom { display: none; }
+  /* When the sheet is minimized, lift the bottom-left radar control above the thin bar. */
+  body.sheet-minimized .leaflet-bottom.leaflet-left { bottom: 40px; transition: bottom .25s ease; }
 }
 
 /* ---------- fuel-range note + override ---------- */
@@ -1069,6 +1074,7 @@ dialog menu { display: flex; justify-content: flex-end; margin: 14px 0 0; paddin
 @media (max-width: 460px) {
   .elev-svg { width: 84px; } .elev-stat small { display: none; }
   .roster-body .staging .stg-label { width: 100%; }
+  body.sheet-minimized .leaflet-bottom.leaflet-left { bottom: 36px; }
 }
 
 /* ---------- live location + "ride ahead" ---------- */
@@ -1138,6 +1144,17 @@ dialog menu { display: flex; justify-content: flex-end; margin: 14px 0 0; paddin
   color: #7fc0ff; font-size: 11.5px; font-weight: 600; cursor: pointer;
 }
 .ahead-ctl .ah-read:hover { text-decoration: underline; }
+.ahead-ctl .ah-rejoin { margin-top: 6px; font-size: 11px; font-weight: 600; color: #ffcf5c; line-height: 1.3; }
+.ahead-ctl .ah-rejoin.hidden { display: none; }
+.ahead-ctl .ah-frame {
+  display: block; width: 100%; margin-top: 6px;
+  background: var(--bg3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--ink); font-size: 11.5px; font-weight: 600; padding: 4px 0; cursor: pointer;
+}
+.ahead-ctl .ah-frame:hover { border-color: var(--amber-deep); }
+/* "ride ahead" panel action row */
+.ah-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.ah-acts .btn { margin-top: 0; }
 
 /* projected "~1h ahead" label on the map */
 .ahead-flag { background: none; border: none; }

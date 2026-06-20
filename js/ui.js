@@ -117,6 +117,7 @@ export function createUI(cb) {
 
   els.aheadPanel.addEventListener('click', (e) => {
     if (e.target.closest('#ah-locate')) { cb.onAheadLocate(); return; }
+    if (e.target.closest('#ah-frame')) { cb.onFrameRoute(); return; }
     if (e.target.closest('#ah-refresh')) { cb.onAheadRefresh(); return; }
     const item = e.target.closest('.ah-item');
     if (item) cb.onFocusPoi(item.dataset.poi);
@@ -187,11 +188,34 @@ export function createUI(cb) {
   els.btnRefresh.addEventListener('click', () => cb.onRefresh());
   els.btnName.addEventListener('click', () => cb.onName());
 
-  els.sheetHandle.addEventListener('click', () => {
-    els.panel.classList.toggle('expanded');
-    els.sheetHandle.classList.toggle('up', els.panel.classList.contains('expanded'));
+  // Bottom sheet has three detents on mobile: min (thin bar, map visible) → half → full.
+  // Tapping the handle steps half → min → full → half, so the FIRST tap from the
+  // default half-height collapses it to reveal the route. Current detent is read from
+  // the DOM (not a counter) so it stays in sync with code elsewhere that toggles the panel.
+  function sheetState() {
+    return els.panel.classList.contains('expanded') ? 'full'
+      : els.panel.classList.contains('min') ? 'min' : 'half';
+  }
+  function setSheet(st) {
+    els.panel.classList.toggle('min', st === 'min');
+    els.panel.classList.toggle('expanded', st === 'full');
+    els.sheetHandle.classList.toggle('up', st === 'full');
+    els.sheetHandle.classList.toggle('down', st === 'min');
+    document.body.classList.toggle('sheet-minimized', st === 'min'); // lifts the bottom-left radar control clear of the thin bar
+    const next = st === 'half' ? 'minimize' : st === 'min' ? 'expand' : 'collapse to half';
+    els.sheetHandle.setAttribute('aria-label', `Plan panel ${st === 'full' ? 'expanded' : st}. Tap to ${next}.`);
+    try { localStorage.setItem('drc:sheet', st); } catch { /* private mode — no persistence */ }
     cb.onSheetToggle();
+  }
+  els.sheetHandle.addEventListener('click', () => {
+    const cur = sheetState();
+    setSheet(cur === 'half' ? 'min' : cur === 'min' ? 'full' : 'half');
   });
+  // Restore the last-used detent (the classes are inert on desktop, where the @860 sheet rules don't apply).
+  try {
+    const saved = localStorage.getItem('drc:sheet');
+    if (saved === 'min' || saved === 'full') setSheet(saved);
+  } catch { /* private mode */ }
 
   // Persist collapse open/closed state for the static sections.
   for (const el of document.querySelectorAll('details.collapse[id]')) wireCollapse(el);
@@ -243,14 +267,22 @@ export function createUI(cb) {
       r.checked = r.value === cfg.returnPreset;
     }
 
-    // summary
+    // summary — miles/arrival adapt when a resume point (progress) is set, and stay
+    // safe when the remaining plan is empty (already at base camp: days === []).
     const lastDay = plan.days[plan.days.length - 1];
     const dest = state.dir === 'out' ? 'Deals Gap' : 'home';
+    const fromMile = plan.totals.fromMile || 0;
+    const milesStat = fromMile > 0
+      ? stat(Math.round(plan.totals.miles), 'mi to go', `Distance remaining from your resume point — of ${Math.round(plan.totals.totalMiles)} mi total`)
+      : stat(Math.round(plan.totals.totalMiles), 'mi this leg', `Total riding distance ${state.dir === 'out' ? 'out to Deals Gap' : 'home'} (one way)`);
+    const arriveStat = lastDay
+      ? stat(minToTime(lastDay.arriveMin).replace(' ', '&hairsp;'), state.dir === 'out' ? 'at the Dragon' : 'home', `Estimated arrival at ${dest} on the final day`)
+      : stat('🏁', state.dir === 'out' ? 'at the Dragon' : 'home', `You've reached ${dest}`);
     els.summary.innerHTML = [
-      stat(Math.round(plan.totals.miles), 'mi this leg', `Total riding distance ${state.dir === 'out' ? 'out to Deals Gap' : 'home'} (one way)`),
-      stat(plan.days.length, `day${plan.days.length > 1 ? 's' : ''} riding`, 'Riding days this leg — driven by saddle time × pace'),
+      milesStat,
+      stat(plan.days.length, `day${plan.days.length === 1 ? '' : 's'} riding`, 'Riding days this leg — driven by saddle time × pace'),
       stat(plan.totals.fuelStops, 'fuel stops', 'Suggested fuel stops, spaced within your tank range'),
-      stat(minToTime(lastDay.arriveMin).replace(' ', '&hairsp;'), state.dir === 'out' ? 'at the Dragon' : 'home', `Estimated arrival at ${dest} on the final day`),
+      arriveStat,
     ].join('');
 
     // warnings + closure notices
@@ -423,15 +455,16 @@ export function createUI(cb) {
     } else {
       const where = info.mp != null ? `MP ${Math.round(info.mp)}` : `mile ${Math.round(info.targetMile)}`;
       note = `~${fmtDurMin(info.min)} ahead`;
-      const callout = info.offRoute
-        ? `<div class="ah-callout">⚠ You're ~${info.offMi} mi off the route line — this assumes you rejoin it. Check the right direction (Outbound / Return) is selected.</div>`
-        : '';
+      const rj = info.rejoin;
+      const callout = rj
+        ? `<div class="ah-callout">↩ <b>Rejoin the route:</b> ${rj.distMi.toFixed(1)} mi <b>${esc(rj.bearing)}</b> · ${rj.mp != null ? `near MP ${Math.round(rj.mp)}` : `near mile ${Math.round(rj.mile)}`} — follow the dashed line on the map.${info.offRoute ? ' You\'re well off it — check the right direction (Outbound / Return) is selected.' : ''}</div>`
+        : (info.offRoute ? `<div class="ah-callout">⚠ ~${info.offMi} mi off the route line. Check the right direction is selected.</div>` : '');
       const flags = info.atEnd ? ' · end of route' : '';
       const head = `<div class="ah-head">In <b>~${fmtDurMin(info.min)}</b> you'll be near <b>${where}</b>${info.etaText ? ` · ~${esc(info.etaText)}` : ''}${flags}</div>`;
       const list = info.results.length
         ? `<div class="ah-list">${info.results.map(aheadItem).join('')}</div>`
         : `<div class="ah-empty">No matching stops within ~30 min of that spot — try <b>+</b> on the map, or pull fresh data.</div>`;
-      body = `${callout}${head}${list}<button class="btn btn-small" id="ah-refresh">Pull fresh places here</button>`;
+      body = `${callout}${head}${list}<div class="ah-acts"><button class="btn btn-small" id="ah-frame">Frame me + route</button><button class="btn btn-small" id="ah-refresh">Pull fresh places here</button></div>`;
     }
     if (!aheadMounted) {
       els.aheadPanel.innerHTML = `<details class="collapse" id="cd-ahead" open><summary>📍 Ride ahead <span class="count">${note}</span></summary><div class="ahead-body">${body}</div></details>`;
@@ -647,7 +680,7 @@ export function createUI(cb) {
     });
   }
 
-  return { render, renderAhead, mountRides, setRidesVisible, mountSights, setSightsVisible, setPwa, askName, isDragging: () => dragging !== null };
+  return { render, renderAhead, mountRides, setRidesVisible, mountSights, setSightsVisible, setPwa, askName, setSheetState: setSheet, isDragging: () => dragging !== null };
 }
 
 // "45 min" / "1 h" / "1 h 30 min" from a minute count.

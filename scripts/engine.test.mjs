@@ -186,6 +186,55 @@ test('priceTier classifies brands into bands', async () => {
   assert.equal(t('Backpackers place', 'lodging', 'hostel'), 1);
 });
 
+// ---- cfg.fromMile: "continue from here" replanning of the remaining route ----
+
+test('fromMile defaults to 0 and is byte-identical to a whole-trip plan', () => {
+  const idx = makeIdx(646.5, [...gasEvery(45, 646.5), ...lodgingAt(355, 640), ...foodEvery(60, 646.5)]);
+  const plan = computePlan(CFG, idx, {});
+  assert.equal(plan.totals.fromMile, 0);
+  assert.equal(plan.totals.miles, plan.totals.totalMiles);    // remaining == whole on a full plan
+  assert.equal(plan.totals.totalMiles, 646.5);
+  assert.equal(plan.totals.rideHrs, 646.5 / CFG.avgMph);
+});
+
+test('fromMile mid-route plans only the remaining miles, nothing before the resume point', () => {
+  const idx = makeIdx(646.5, [...gasEvery(40, 646.5), ...lodgingAt(180, 350, 540, 640), ...foodEvery(60, 646.5)]);
+  const M = 200;
+  const plan = computePlan({ ...CFG, fromMile: M }, idx, {});
+  assert.equal(plan.totals.fromMile, M);
+  assert.equal(plan.totals.totalMiles, 646.5);
+  assert.ok(Math.abs(plan.totals.miles - (646.5 - M)) < 1e-9, 'totals.miles is REMAINING');
+  assert.ok(Math.abs(plan.totals.rideHrs - (646.5 - M) / CFG.avgMph) < 1e-9);
+  assert.ok(plan.days.length >= 1);
+  assert.ok(Math.abs(plan.days[0].startMile - M) < 1e-6, `first day starts at ${plan.days[0].startMile}`);
+  for (const day of plan.days) assert.ok(day.startMile >= M - 1e-6, 'no day starts before fromMile');
+  for (const leg of plan.fuelLegs) assert.ok(leg.mile > M - 1e-6, 'no fuel leg before fromMile');
+});
+
+test('fromMile === total (already at base camp) yields an empty plan, no throw', () => {
+  const idx = makeIdx(646.5, [...gasEvery(45, 646.5), ...lodgingAt(355, 640)]);
+  const plan = computePlan({ ...CFG, fromMile: 646.5 }, idx, {});
+  assert.equal(plan.days.length, 0);
+  assert.equal(plan.fuelLegs.length, 0);
+  assert.equal(plan.totals.miles, 0);
+  assert.equal(plan.totals.fromMile, 646.5);
+});
+
+test('fromMile clamps negative / overshoot / NaN', () => {
+  const idx = makeIdx(646.5, [...gasEvery(45, 646.5), ...lodgingAt(355, 640)]);
+  assert.equal(computePlan({ ...CFG, fromMile: -50 }, idx, {}).totals.fromMile, 0);
+  assert.equal(computePlan({ ...CFG, fromMile: 999 }, idx, {}).totals.fromMile, 646.5);
+  assert.equal(computePlan({ ...CFG, fromMile: 'nope' }, idx, {}).totals.fromMile, 0);
+  assert.equal(computePlan({ ...CFG, fromMile: NaN }, idx, {}).totals.fromMile, 0);
+});
+
+test('fuel picks behind fromMile are skipped; picks ahead still honored', () => {
+  const idx = makeIdx(646.5, [...gasEvery(35, 646.5), ...lodgingAt(540, 640)]);
+  const plan = computePlan({ ...CFG, fromMile: 200 }, idx, { fuel: ['g70', 'g315'] });
+  assert.ok(!plan.fuelLegs.some((l) => l.chosen.poi.id === 'g70'), 'g70 (behind 200) is not a leg');
+  assert.ok(plan.fuelLegs.some((l) => l.chosen.poi.id === 'g315' && l.isPick), 'g315 (ahead) still picked');
+});
+
 test('classifyPoiSlot maps categories to the right slot', () => {
   const idx = makeIdx(646.5, [...gasEvery(45, 646.5), ...lodgingAt(355, 640), ...foodEvery(60, 646.5)]);
   const plan = computePlan(CFG, idx, {});

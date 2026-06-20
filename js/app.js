@@ -13,12 +13,12 @@ import { createLocator } from './locate.js';
 import { createSync } from './sync.js';
 import { encodeStateHash, decodeHash } from './share.js';
 import { buildGpx, downloadGpx } from './gpx.js';
-import { buildGridIndex, projectToRoute, pointAtMile, elevationForSpan } from './geo.js';
+import { buildGridIndex, projectToRoute, pointAtMile, elevationForSpan, bearingDeg, compass16 } from './geo.js';
 import { sunTimes } from './sun.js';
 import { dayWeather } from './weather.js';
 import { initPwa } from './pwa.js';
 
-const DATA_V = '2026-06-19-1'; // bumped on data redeploys to bust the Pages CDN cache
+const DATA_V = '2026-06-20-1'; // bumped on data redeploys to bust the Pages CDN cache
 const HIGH_FT = 4500;          // elevation that triggers the cold/fog "pack layers" warning
 
 boot().catch((e) => {
@@ -88,6 +88,7 @@ async function boot() {
     onLocate: () => onLocate(),
     onAheadStep: (dir) => stepAhead(dir),
     onAheadFocus: () => { if (loc.point) mapApi.focusAhead(loc.point); },
+    onFrameRoute: () => mapApi.frameMeAndRoute(loc.fix, current.route),
     onMapDrag: () => {
       // A manual pan opts out of follow — including during acquisition, so the first
       // fix doesn't yank the viewport back to the dot.
@@ -99,7 +100,8 @@ async function boot() {
   // ---------- live location & "ride ahead" ----------
   // All ephemeral (never persisted/synced): a GPS fix, the locate button's state,
   // the projected forward point, and the chosen look-ahead duration.
-  const AHEAD_STEPS = [30, 45, 60, 90, 120]; // minutes
+  const AHEAD_STEPS = [30, 45, 60, 90, 120, 180, 240, 300]; // minutes (up to 5 h)
+  const REJOIN_OFF_MI = 1.5; // show the "rejoin the route" connector once you're this far off the line
   const LOC_ERR = {
     denied: 'Location permission denied — enable it in your browser to see yourself.',
     unavailable: "Couldn't get a location fix — no GPS signal?",
@@ -107,7 +109,7 @@ async function boot() {
     unsupported: "This device can't share its location.",
     insecure: 'Live location needs the https site (it won\'t work opening the file directly).',
   };
-  const loc = { fix: null, state: 'off', follow: false, min: 60, point: null, targetMile: null, errToast: false };
+  const loc = { fix: null, state: 'off', follow: false, min: 60, point: null, targetMile: null, errToast: false, rejoin: null };
 
   const locator = createLocator({
     onUpdate(fix) {
@@ -130,10 +132,11 @@ async function boot() {
   // Full teardown: stop the watch and reset all locate/ahead state + UI.
   function resetLocate() {
     locator.stop();
-    loc.fix = null; loc.follow = false; loc.state = 'off'; loc.point = null; loc.targetMile = null;
+    loc.fix = null; loc.follow = false; loc.state = 'off'; loc.point = null; loc.targetMile = null; loc.rejoin = null;
     mapApi.setLocateState('off');
     mapApi.clearUserLocation();
     mapApi.setAhead({ visible: false });
+    mapApi.setRejoin(null);
     ui.renderAhead(null);
   }
 
@@ -160,7 +163,7 @@ async function boot() {
   // Project the GPS fix onto the active route, ride forward avgMph × duration, and
   // gather the nearest stops (in the toggled-on categories) around that point.
   function updateAhead() {
-    if (loc.state === 'off' || !loc.fix || !current.route) { loc.point = null; ui.renderAhead(null); return; }
+    if (loc.state === 'off' || !loc.fix || !current.route) { loc.point = null; loc.rejoin = null; mapApi.setRejoin(null); ui.renderAhead(null); return; }
     const { route, rk, idx } = current;
     const total = route.cum[route.cum.length - 1];
     // On-route fixes snap within a mile or two; allow up to 20 mi (a parallel road /
@@ -169,12 +172,23 @@ async function boot() {
     const pr = projectToRoute(gridFor(rk), route.cum, loc.fix.lat, loc.fix.lon, 8)
       || projectToRoute(gridFor(rk), route.cum, loc.fix.lat, loc.fix.lon, 20);
     if (!pr) {
-      loc.point = null;
+      loc.point = null; loc.rejoin = null;
       mapApi.setAhead({ visible: false, minutes: loc.min, note: 'not near route' });
+      mapApi.setRejoin(null);
       ui.renderAhead({ tracking: true, min: loc.min, offRoute: true, note: "You're not near the planned route — make sure the right direction (Outbound / Return) is selected, or get closer." });
       return;
     }
     const offRoute = pr.offMi > 8;
+    // Rejoin connector: nearest point on the route + bearing/distance. Shown whenever the
+    // rider is more than REJOIN_OFF_MI off the line (decoupled from the 8-mi off-route gate,
+    // so the 2-8 mi "I pulled off to a hotel" case actually gets guidance).
+    const rejoinPt = pointAtMile(route, pr.mile);
+    const rejoin = pr.offMi > REJOIN_OFF_MI
+      ? { from: [loc.fix.lat, loc.fix.lon], to: rejoinPt, distMi: pr.offMi,
+          bearing: compass16(bearingDeg(loc.fix.lat, loc.fix.lon, rejoinPt[0], rejoinPt[1])),
+          mp: mileToBrpMp(route, pr.mile), mile: pr.mile }
+      : null;
+    loc.rejoin = rejoin;
     const distAhead = (S.cfg.avgMph || 45) * (loc.min / 60);
     const targetMile = Math.min(total, pr.mile + distAhead);
     const point = pointAtMile(route, targetMile);
@@ -201,9 +215,10 @@ async function boot() {
     const atEnd = targetMile >= total - 0.5;
 
     mapApi.setAhead({ visible: true, minutes: loc.min, point, mp, targetMile, count: results.length, offRoute });
+    mapApi.setRejoin(rejoin);
     ui.renderAhead({
       tracking: true, min: loc.min, mp, targetMile, etaText, offRoute, offMi: Math.round(pr.offMi), atEnd,
-      fromMile: pr.mile, results,
+      fromMile: pr.mile, results, rejoin,
     });
   }
 
@@ -597,7 +612,7 @@ async function boot() {
     },
     onStagingPin() {
       showToast('Tap the map to drop the meetup pin');
-      if (window.innerWidth <= 860) { document.getElementById('panel').classList.remove('expanded'); mapApi.invalidate(); }
+      if (window.innerWidth <= 860) ui.setSheetState('min'); // get the sheet out of the way (also calls mapApi.invalidate)
       mapApi.pickPoint((latlng) => {
         S.staging = { ...(S.staging || {}), lat: +latlng.lat.toFixed(5), lon: +latlng.lng.toFixed(5) };
         store.update({ staging: S.staging });
@@ -629,6 +644,7 @@ async function boot() {
     onDeleteExpense(id) { removeExpense(id); },
     onAheadLocate() { onLocate(); },
     onAheadRefresh() { void refreshAhead(); },
+    onFrameRoute() { mapApi.frameMeAndRoute(loc.fix, current.route); },
     onRerender() { recompute(); },
     async onShare() {
       if (sync && sync.mode !== 'local') {

@@ -13,6 +13,19 @@ export function haversineMi(latA, lonA, latB, lonB) {
   return 2 * R_MI * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
+// Great-circle initial bearing A->B in degrees (0=N, 90=E). Coords are [lat, lon].
+export function bearingDeg(latA, lonA, latB, lonB) {
+  const y = Math.sin((lonB - lonA) * DEG) * Math.cos(latB * DEG);
+  const x = Math.cos(latA * DEG) * Math.sin(latB * DEG) -
+    Math.sin(latA * DEG) * Math.cos(latB * DEG) * Math.cos((lonB - lonA) * DEG);
+  return (Math.atan2(y, x) / DEG + 360) % 360;
+}
+
+const COMPASS16 = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+export function compass16(deg) {
+  return COMPASS16[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
+}
+
 export function cumulativeMiles(coords) {
   const cum = new Array(coords.length);
   cum[0] = 0;

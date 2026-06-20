@@ -283,6 +283,7 @@ export function classifyPoiSlot(plan, idx, poiId) {
   const e = idx.byId.get(poiId);
   if (!e) return null;
   if (e.poi.cat === 'fuel') return { kind: 'fuel' };
+  if (!plan.days.length) return null; // empty remaining plan (at base camp) — nothing to assign
   if (e.poi.cat === 'food') {
     const day = plan.days.find((d) => e.m >= d.startMile - 1e-6 && e.m <= d.endMile + 1e-6) || plan.days[plan.days.length - 1];
     return { kind: 'lunch', dayIdx: day.idx };

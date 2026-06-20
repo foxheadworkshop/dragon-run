@@ -88,7 +88,7 @@ async function boot() {
     onLocate: () => onLocate(),
     onAheadStep: (dir) => stepAhead(dir),
     onAheadFocus: () => { if (loc.point) mapApi.focusAhead(loc.point); },
-    onFrameRoute: () => mapApi.frameMeAndRoute(loc.fix, current.route),
+    onFrameRoute: () => frameMeAndRoute(),
     onMapDrag: () => {
       // A manual pan opts out of follow — including during acquisition, so the first
       // fix doesn't yank the viewport back to the dot.
@@ -158,6 +158,14 @@ async function boot() {
     if (i < 0) i = 2;
     loc.min = AHEAD_STEPS[Math.max(0, Math.min(AHEAD_STEPS.length - 1, i + dir))];
     updateAhead();
+  }
+
+  // "Frame me + route" is an explicit "show me the whole route" action, so it must opt out
+  // of follow — otherwise the next GPS fix recenters on the dot and the frame snaps back.
+  function frameMeAndRoute() {
+    if (loc.state === 'follow') { loc.state = 'on'; mapApi.setLocateState('on'); }
+    loc.follow = false;
+    mapApi.frameMeAndRoute(loc.fix, current.route);
   }
 
   // Project the GPS fix onto the active route, ride forward avgMph × duration, and
@@ -743,7 +751,7 @@ async function boot() {
     onDeleteExpense(id) { removeExpense(id); },
     onAheadLocate() { onLocate(); },
     onAheadRefresh() { void refreshAhead(); },
-    onFrameRoute() { mapApi.frameMeAndRoute(loc.fix, current.route); },
+    onFrameRoute() { frameMeAndRoute(); },
     onRerender() { recompute(); },
     async onShare() {
       if (sync && sync.mode !== 'local') {

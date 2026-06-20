@@ -7,7 +7,7 @@
 // never bulk-prefetched — that's what the OSM tile usage policy permits. Do NOT add
 // a "download region" button that loops tile requests; that would violate the policy.
 
-const VERSION = '2026-06-17-4';
+const VERSION = '2026-06-19-1';
 const SHELL = `dr-shell-${VERSION}`;
 const TILES = 'dr-tiles-v1';        // not version-scoped — tiles are long-lived
 const RUNTIME = `dr-runtime-${VERSION}`;
@@ -18,7 +18,7 @@ const SHELL_ASSETS = [
   './js/app.js', './js/state.js', './js/route.js', './js/rides.js', './js/sights.js',
   './js/poi.js', './js/engine.js', './js/split.js', './js/map.js', './js/ui.js',
   './js/sync.js', './js/share.js', './js/gpx.js', './js/geo.js', './js/sun.js',
-  './js/weather.js', './js/firebase-config.js', './js/pwa.js',
+  './js/weather.js', './js/firebase-config.js', './js/pwa.js', './js/locate.js',
   `./data/route-outbound.json?v=${VERSION}`,
   `./data/route-return-fast.json?v=${VERSION}`,
   `./data/pois.json?v=${VERSION}`,

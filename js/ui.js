@@ -364,7 +364,7 @@ export function createUI(cb) {
 
   function dayCard(ctx, day, i, dateOffsets) {
     const { state, route } = ctx;
-    const dateStr = fmtDate(state.cfg.startDate, dateOffsets + i);
+    const dateStr = fmtDate(ctx.dateStartISO || state.cfg.startDate, dateOffsets + i);
     const color = DAY_COLORS[i % DAY_COLORS.length];
     const head = `
       <div class="day-head">
@@ -527,8 +527,8 @@ export function createUI(cb) {
     }
     const dayNum = (dayBase || 0) + 1;
     const where = fromMp != null ? `MP ${Math.round(fromMp)}` : `mile ${Math.round(progress.fromMile)}`;
-    const log = (progress.completedDays || []).map((d) =>
-      `<span class="pb-day">Day ${d.dayNum}: ${d.label ? esc(d.label) : `mi ${Math.round(d.endMile)}`}</span>`).join('');
+    const log = (progress.completedDays || []).map((d, i) =>
+      `<span class="pb-day">Stop ${i + 1}: ${d.label ? esc(d.label) : `mi ${Math.round(d.endMile)}`}</span>`).join('');
     return `<div class="progress-block">
       <div class="pb-head">📍 Day ${dayNum} · resuming near ${where}</div>
       <div class="pb-now">${Math.round(plan.totals.miles)} mi to go · plan assumes a full tank at the resume point</div>

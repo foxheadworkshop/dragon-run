@@ -245,3 +245,11 @@ test('classifyPoiSlot maps categories to the right slot', () => {
   assert.equal(lunch.kind, 'lunch');
   assert.equal(lunch.dayIdx, 0);
 });
+
+test('classifyPoiSlot returns null on an empty remaining plan (at base camp), no throw', () => {
+  const idx = makeIdx(646.5, [...gasEvery(45, 646.5), ...lodgingAt(355, 640), ...foodEvery(60, 646.5)]);
+  const plan = computePlan({ ...CFG, fromMile: 646.5 }, idx, {}); // days === []
+  assert.equal(plan.days.length, 0);
+  assert.equal(classifyPoiSlot(plan, idx, 'f180'), null); // food previously threw on undefined.idx
+  assert.equal(classifyPoiSlot(plan, idx, 'g90').kind, 'fuel'); // fuel still classifies
+});

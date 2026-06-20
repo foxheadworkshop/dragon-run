@@ -88,7 +88,7 @@ async function boot() {
     onLocate: () => onLocate(),
     onAheadStep: (dir) => stepAhead(dir),
     onAheadFocus: () => { if (loc.point) mapApi.focusAhead(loc.point); },
-    onFrameRoute: () => mapApi.frameMeAndRoute(loc.fix, current.route),
+    onFrameRoute: () => frameMeAndRoute(),
     onMapDrag: () => {
       // A manual pan opts out of follow — including during acquisition, so the first
       // fix doesn't yank the viewport back to the dot.
@@ -158,6 +158,14 @@ async function boot() {
     if (i < 0) i = 2;
     loc.min = AHEAD_STEPS[Math.max(0, Math.min(AHEAD_STEPS.length - 1, i + dir))];
     updateAhead();
+  }
+
+  // "Frame me + route" is an explicit "show me the whole route" action, so it must opt out
+  // of follow — otherwise the next GPS fix recenters on the dot and the frame snaps back.
+  function frameMeAndRoute() {
+    if (loc.state === 'follow') { loc.state = 'on'; mapApi.setLocateState('on'); }
+    loc.follow = false;
+    mapApi.frameMeAndRoute(loc.fix, current.route);
   }
 
   // Project the GPS fix onto the active route, ride forward avgMph × duration, and
@@ -341,9 +349,12 @@ async function boot() {
     const outDays = S.dir === 'ret'
       ? computePlan({ ...engCfg, fromMile: 0 }, idxFor('out'), S.picks.out).days.length
       : plan.days.length;
-    const dateOffsets = (S.dir === 'out' ? 0 : outDays + (S.cfg.stayDays || 0)) + dayBase;
+    // Dates: with an outbound resume anchor the first REMAINING day is TODAY (riding now);
+    // otherwise anchor to the planned start. day.idx is relative to the remaining plan either way.
+    const dateStartISO = prog ? todayISO() : S.cfg.startDate;
+    const dateOffsets = prog ? 0 : (S.dir === 'out' ? 0 : outDays + (S.cfg.stayDays || 0));
 
-    decoratePlan(rk, route, plan, dateOffsets, dayBase);
+    decoratePlan(rk, route, plan, dateStartISO, dateOffsets, dayBase);
 
     const routeChanged = rk !== current.rk;
     const firstLoad = current.rk === null;
@@ -356,7 +367,7 @@ async function boot() {
     }
     mapApi.renderPlan(route, plan, { fromMile, completedDays: prog?.completedDays || [] });
     if (markers || routeChanged) mapApi.setMarkers(visibleEntries(idx));
-    ui.render({ state: S, route, plan, dateOffsets, dayBase, progress: prog,
+    ui.render({ state: S, route, plan, dateStartISO, dateOffsets, dayBase, progress: prog,
       fromMp: prog ? mileToBrpMp(route, prog.fromMile) : null,
       rides, effFuel, fuelSource, fuelBike, costs: costView() });
     scheduleWeather(rk, route, plan);
@@ -374,12 +385,12 @@ async function boot() {
 
   // Sun times, dark-arrival warnings (replacing the engine's fixed 19:30 rule),
   // and any already-fetched weather, attached per day.
-  function decoratePlan(rk, route, plan, dateOffsets, dayBase = 0) {
+  function decoratePlan(rk, route, plan, dateStartISO, dateOffsets, dayBase = 0) {
     plan.warnings = plan.warnings.filter((w) => w.code !== 'LATE_ARRIVAL' && w.code !== 'HIGH_ELEVATION');
     for (const day of plan.days) {
       day.absIdx = dayBase + day.idx;       // absolute trip-day index (0-based)
       day.tripDay = dayBase + day.idx + 1;  // human "Day N" across the whole trip
-      day.dateISO = addDays(S.cfg.startDate, dateOffsets + day.idx);
+      day.dateISO = addDays(dateStartISO, dateOffsets + day.idx);
       const [sLat, sLon] = pointAtMile(route, day.startMile);
       const [eLat, eLon] = pointAtMile(route, day.endMile);
       const rise = sunTimes(sLat, sLon, day.dateISO);
@@ -438,6 +449,12 @@ async function boot() {
     const d = /^\d{4}-\d{2}-\d{2}$/.test(iso || '') ? new Date(iso + 'T12:00:00') : new Date();
     d.setDate(d.getDate() + n);
     return d.toISOString().slice(0, 10);
+  }
+
+  // Local "today" as YYYY-MM-DD (local, not UTC — avoids a midnight-rollover off-by-one).
+  function todayISO() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
   function visibleEntries(idx) {
@@ -743,7 +760,7 @@ async function boot() {
     onDeleteExpense(id) { removeExpense(id); },
     onAheadLocate() { onLocate(); },
     onAheadRefresh() { void refreshAhead(); },
-    onFrameRoute() { mapApi.frameMeAndRoute(loc.fix, current.route); },
+    onFrameRoute() { frameMeAndRoute(); },
     onRerender() { recompute(); },
     async onShare() {
       if (sync && sync.mode !== 'local') {
@@ -819,7 +836,7 @@ async function boot() {
       sync = await createSync({
         tripId: S.tripId,
         rider: S.rider,
-        getSnapshot: () => { const cfg = { ...S.cfg, progress: S.progress }; delete cfg.fuelOverride; return { cfg, picks: S.picks }; },
+        getSnapshot: () => { const cfg = { ...S.cfg }; delete cfg.fuelOverride; if (S.progress) cfg.progress = S.progress; return { cfg, picks: S.picks }; },
         getRider: () => { const me = S.roster.find((r) => r.uid === S.rider.uid); return me ? pickRider(me) : { name: S.rider.name, color: S.rider.color, bike: '', tankRangeMi: S.cfg.tankRangeMi, rsvp: 'in' }; },
         onRemote(patch) {
           applyingRemote = true;

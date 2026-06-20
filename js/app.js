@@ -1,6 +1,6 @@
 // Bootstrap + orchestration. The only module with side effects at import time.
 
-import { createStore, normalizePicks, normalizeExpenses, ensureSelfInRoster, effectiveFuelRange, riderColor, randomId } from './state.js';
+import { createStore, normalizePicks, normalizeExpenses, normalizeProgress, ensureSelfInRoster, effectiveFuelRange, riderColor, randomId } from './state.js';
 import { loadRoute, reverseRoute, mileToBrpMp } from './route.js';
 import { loadRides, DIFF_LABEL, milesFromBase } from './rides.js';
 import { loadSights, indexSights, SIGHT_LABEL } from './sights.js';
@@ -318,27 +318,47 @@ async function boot() {
     const route = routes[rk];
     const idx = idxFor(rk);
     const { range: effFuel, source: fuelSource, bike: fuelBike } = effectiveFuelRange(S);
-    const engCfg = { ...S.cfg, tankRangeMi: effFuel, includeCamping: S.toggles.camping };
-    const plan = computePlan(engCfg, idx, S.picks[S.dir]);
 
-    let outDays = plan.days.length;
-    if (S.dir === 'ret') outDays = computePlan(engCfg, idxFor('out'), S.picks.out).days.length;
-    const dateOffsets = S.dir === 'out' ? 0 : outDays + (S.cfg.stayDays || 0);
+    // Trip progress is OUTBOUND-only: replan the REMAINING route from prog.fromMile.
+    const prog = (S.dir === 'out' && S.progress) ? S.progress : null;
+    const fromMile = prog ? prog.fromMile : 0;
+    const engCfg = { ...S.cfg, tankRangeMi: effFuel, includeCamping: S.toggles.camping, fromMile };
 
-    decoratePlan(rk, route, plan, dateOffsets);
+    // dayBase = trip days already completed, DERIVED from fromMile (not completedDays.length)
+    // so "start from here" alone renumbers + redates the remaining days correctly. Count the
+    // full-plan day boundaries that fall at/before the resume point.
+    let dayBase = 0;
+    if (fromMile > 0) {
+      const fullDays = computePlan({ ...engCfg, fromMile: 0 }, idx, S.picks[S.dir]).days;
+      dayBase = fullDays.filter((d) => d.endMile <= fromMile + 1e-6).length;
+    }
+
+    // Picks are stored under ABSOLUTE trip-day keys; the engine sees them relative (shifted
+    // down by dayBase, completed days dropped). See shiftPicksForEngine / liftSlotToAbsolute.
+    const plan = computePlan(engCfg, idx, shiftPicksForEngine(S.picks[S.dir], dayBase));
+
+    // Return-leg date offset needs the WHOLE outbound day count — force fromMile:0 for that probe.
+    const outDays = S.dir === 'ret'
+      ? computePlan({ ...engCfg, fromMile: 0 }, idxFor('out'), S.picks.out).days.length
+      : plan.days.length;
+    const dateOffsets = (S.dir === 'out' ? 0 : outDays + (S.cfg.stayDays || 0)) + dayBase;
+
+    decoratePlan(rk, route, plan, dateOffsets, dayBase);
 
     const routeChanged = rk !== current.rk;
     const firstLoad = current.rk === null;
-    current = { plan, idx, route, rk, dateOffsets };
+    current = { plan, idx, route, rk, dateOffsets, dayBase, fromMile };
     if (routeChanged) {
       mapApi.setBase(route);
       mapApi.fitRoute(route, !firstLoad); // animate to the new route, except on first paint
       if (!firstLoad) mapApi.flashRoute(route); // bright pulse so the switch is unmistakable
       mapApi.setSights(sightsFor(rk));
     }
-    mapApi.renderPlan(route, plan);
+    mapApi.renderPlan(route, plan, { fromMile, completedDays: prog?.completedDays || [] });
     if (markers || routeChanged) mapApi.setMarkers(visibleEntries(idx));
-    ui.render({ state: S, route, plan, dateOffsets, rides, effFuel, fuelSource, fuelBike, costs: costView() });
+    ui.render({ state: S, route, plan, dateOffsets, dayBase, progress: prog,
+      fromMp: prog ? mileToBrpMp(route, prog.fromMile) : null,
+      rides, effFuel, fuelSource, fuelBike, costs: costView() });
     scheduleWeather(rk, route, plan);
     if (loc.state !== 'off' && loc.fix) updateAhead(); // keep the projection in step with route/toggle changes
   }
@@ -354,9 +374,11 @@ async function boot() {
 
   // Sun times, dark-arrival warnings (replacing the engine's fixed 19:30 rule),
   // and any already-fetched weather, attached per day.
-  function decoratePlan(rk, route, plan, dateOffsets) {
+  function decoratePlan(rk, route, plan, dateOffsets, dayBase = 0) {
     plan.warnings = plan.warnings.filter((w) => w.code !== 'LATE_ARRIVAL' && w.code !== 'HIGH_ELEVATION');
     for (const day of plan.days) {
+      day.absIdx = dayBase + day.idx;       // absolute trip-day index (0-based)
+      day.tripDay = dayBase + day.idx + 1;  // human "Day N" across the whole trip
       day.dateISO = addDays(S.cfg.startDate, dateOffsets + day.idx);
       const [sLat, sLon] = pointAtMile(route, day.startMile);
       const [eLat, eLon] = pointAtMile(route, day.endMile);
@@ -367,14 +389,14 @@ async function boot() {
       if (day.elev && day.elev.maxFt >= HIGH_FT) {
         plan.warnings.push({
           code: 'HIGH_ELEVATION', dayIdx: day.idx,
-          msg: `Day ${day.idx + 1} tops ${day.elev.maxFt.toLocaleString()} ft — expect cold, wind and fog up high. Pack layers and mind ice on shaded bends.`,
+          msg: `Day ${day.tripDay} tops ${day.elev.maxFt.toLocaleString()} ft — expect cold, wind and fog up high. Pack layers and mind ice on shaded bends.`,
         });
       }
       if (day.sun && day.arriveMin > day.sun.setMin - 30) {
         const after = day.arriveMin > day.sun.setMin;
         plan.warnings.push({
           code: 'DARK_ARRIVAL', dayIdx: day.idx,
-          msg: `Day ${day.idx + 1} arrives ~${minToTime(day.arriveMin)}, ${after ? 'after' : 'right at'} sunset (${minToTime(day.sun.setMin)}). Deer o'clock — start earlier or trim hours.`,
+          msg: `Day ${day.tripDay} arrives ~${minToTime(day.arriveMin)}, ${after ? 'after' : 'right at'} sunset (${minToTime(day.sun.setMin)}). Deer o'clock — start earlier or trim hours.`,
         });
       }
       day.wx = wxCache.get(wxKey(rk, day)) || null;
@@ -429,16 +451,51 @@ async function boot() {
 
   // ---------- picks & votes ----------
 
+  // Picks are STORED under absolute trip-day keys (Day 1 = key 0, forever). The engine sees
+  // them shifted to the REMAINING plan: lodging/lunch keys lowered by dayBase, completed days
+  // dropped. Fuel is mile-keyed (the engine ignores fuel behind fromMile itself), so untouched.
+  function shiftPicksForEngine(p, dayBase) {
+    if (!dayBase) return p;
+    const lower = (m) => {
+      const o = {};
+      for (const [k, v] of Object.entries(m || {})) { const nk = Number(k) - dayBase; if (nk >= 0) o[nk] = v; }
+      return o;
+    };
+    return { fuel: p.fuel, lodging: lower(p.lodging), lunch: lower(p.lunch) };
+  }
+  // Raise a classifyPoiSlot result (dayIdx relative to the live remaining plan) to its absolute key.
+  function liftSlotToAbsolute(slot, dayBase) {
+    if (!slot || slot.kind === 'fuel' || !dayBase) return slot;
+    return { ...slot, dayIdx: slot.dayIdx + dayBase };
+  }
+
   function isPicked(poiId) {
     const p = S.picks[S.dir];
-    return p.fuel.includes(poiId) ||
+    const picked = p.fuel.includes(poiId) ||
       Object.values(p.lodging).includes(poiId) ||
       Object.values(p.lunch).includes(poiId);
+    // A pick behind the resume point stays in storage (so Clear restores it) but isn't ACTIVE
+    // — the engine skips it — so don't badge it as picked while progress is set.
+    if (picked && (current.fromMile || 0) > 0) {
+      const e = current.idx?.byId.get(poiId);
+      if (e && e.m < current.fromMile - 1e-6) return false;
+    }
+    return picked;
   }
 
   function applyPickToggle(poiId, explicit = null) {
     const p = S.picks[S.dir];
-    const slot = explicit || classifyPoiSlot(current.plan, current.idx, poiId);
+    const dayBase = current.dayBase || 0;
+    const fromMile = current.fromMile || 0;
+    // Once progress is set, a lodging/lunch stop physically behind the resume point can't be
+    // (re)assigned — classifyPoiSlot would otherwise snap it onto today's remaining day.
+    if (fromMile > 0) {
+      const e = current.idx.byId.get(poiId);
+      if (e && e.poi.cat !== 'fuel' && e.m < fromMile - 1e-6) { showToast('That stop is behind you — already ridden'); return; }
+    }
+    // Explicit slots (from a day card's data-daykey) are already ABSOLUTE; classified slots are
+    // relative to the remaining plan and must be lifted up by dayBase before storing.
+    const slot = explicit || liftSlotToAbsolute(classifyPoiSlot(current.plan, current.idx, poiId), dayBase);
     if (!slot) return;
     if (slot.kind === 'fuel') {
       const i = p.fuel.indexOf(poiId);
@@ -452,6 +509,22 @@ async function boot() {
     sync?.savePicks(S.dir, S.picks[S.dir]);
     recompute();
     mapApi.refreshOpenPopup();
+  }
+
+  // Project the local GPS fix onto the OUTBOUND route (progress is outbound-only) -> mile | null.
+  function projectFixToOutbound() {
+    if (!loc.fix) return null;
+    const pr = projectToRoute(gridFor('out'), routes.out.cum, loc.fix.lat, loc.fix.lon, 8)
+      || projectToRoute(gridFor('out'), routes.out.cum, loc.fix.lat, loc.fix.lon, 30);
+    return pr ? pr.mile : null;
+  }
+
+  // Set/clear the group resume anchor. Rides inside the synced trip config (like staging).
+  function setProgress(next) {
+    S.progress = normalizeProgress(next);
+    store.update({ progress: S.progress });
+    if (!applyingRemote) sync?.saveConfig({ progress: S.progress });
+    recompute({ markers: true });
   }
 
   async function toggleVote(poiId) {
@@ -622,6 +695,32 @@ async function boot() {
         showToast('Meetup pin set 📍');
       });
     },
+    // ---- trip progress (outbound resume anchor) ----
+    onProgressStartHere() {
+      const mile = projectFixToOutbound();
+      if (mile == null) { showToast(loc.fix ? "You're not near the outbound route" : 'Tap the ⌖ locate button first so I know where you are'); return; }
+      setProgress({ ...(S.progress || {}), fromMile: Math.round(mile) });
+      showToast(`Resuming from mile ${Math.round(mile)} — remaining plan updated`);
+    },
+    onProgressMarkStop() {
+      // Log last night's stop: capture current GPS (or the existing resume point) as a completed day.
+      const mile = projectFixToOutbound() ?? (S.progress?.fromMile ?? null);
+      if (mile == null) { showToast('Tap locate first, or use "Start today from my location"'); return; }
+      const prog = S.progress || { completedDays: [] };
+      const days = prog.completedDays || [];
+      if (days.some((d) => Math.abs(d.endMile - mile) < 5)) { showToast('That stop is already logged'); return; }
+      const entry = { dayNum: days.length + 1, endMile: Math.round(mile), label: '', lat: loc.fix?.lat ?? null, lon: loc.fix?.lon ?? null, dateISO: null };
+      setProgress({ ...prog, fromMile: Math.round(mile), completedDays: [...days, entry] });
+      showToast(`Logged last night's stop at mile ${Math.round(mile)}`);
+    },
+    onProgressClear() {
+      if (!S.progress) return;
+      S.progress = null;
+      store.update({ progress: null });
+      if (!applyingRemote) sync?.saveConfig({ progress: null });
+      recompute({ markers: true });
+      showToast('Trip progress cleared — full plan restored');
+    },
     // ---- cost split ----
     onAddExpense(partial) {
       const now = Date.now();
@@ -720,7 +819,7 @@ async function boot() {
       sync = await createSync({
         tripId: S.tripId,
         rider: S.rider,
-        getSnapshot: () => { const cfg = { ...S.cfg }; delete cfg.fuelOverride; return { cfg, picks: S.picks }; },
+        getSnapshot: () => { const cfg = { ...S.cfg, progress: S.progress }; delete cfg.fuelOverride; return { cfg, picks: S.picks }; },
         getRider: () => { const me = S.roster.find((r) => r.uid === S.rider.uid); return me ? pickRider(me) : { name: S.rider.name, color: S.rider.color, bike: '', tankRangeMi: S.cfg.tankRangeMi, rsvp: 'in' }; },
         onRemote(patch) {
           applyingRemote = true;
@@ -729,6 +828,9 @@ async function boot() {
               const cfg = { ...patch.config };
               delete cfg.fuelOverride; // never accept a remote override
               if (cfg.staging !== undefined) { S.staging = cfg.staging; delete cfg.staging; mapApi.setStaging(S.staging); }
+              // Pull progress OUT before Object.assign — else it leaks into S.cfg and gets
+              // spread into engCfg. (null on Clear is honored: null !== undefined.)
+              if (cfg.progress !== undefined) { S.progress = normalizeProgress(cfg.progress); delete cfg.progress; }
               if (ui.isDragging()) {
                 for (const k of ['tankRangeMi', 'hoursPerDay', 'avgMph']) delete cfg[k];
               }

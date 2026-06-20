@@ -254,16 +254,23 @@ export function createMap(el, handlers) {
       setTimeout(() => { if (highlight.hasLayer(fl)) highlight.removeLayer(fl); }, 1500);
     },
 
-    renderPlan(route, plan) {
+    renderPlan(route, plan, progress = null) {
       daySegs.clearLayers();
       flags.clearLayers();
       bands.clearLayers();
       chosenLayer.clearLayers();
 
+      // When trip progress is set, faintly dash the already-ridden stretch so the live
+      // day colours (which start at the resume point) read as "what's left".
+      const fromMile = progress?.fromMile || 0;
+      if (fromMile > 0) {
+        L.polyline(sliceCoords(route, 0, fromMile), { color: '#3a3f4b', weight: 5, opacity: 0.5, dashArray: '1 8', interactive: false }).addTo(daySegs);
+      }
+
       plan.days.forEach((day, i) => {
         const seg = sliceCoords(route, day.startMile, day.endMile);
         L.polyline(seg, { color: DAY_COLORS[i % DAY_COLORS.length], weight: 5, opacity: 0.95 })
-          .bindTooltip(`Day ${i + 1} — ${Math.round(day.miles)} mi`, { sticky: true })
+          .bindTooltip(`Day ${day.tripDay ?? (i + 1)} — ${Math.round(day.miles)} mi`, { sticky: true })
           .addTo(daySegs);
       });
 
@@ -273,15 +280,18 @@ export function createMap(el, handlers) {
           .addTo(bands);
       }
 
-      // start / day-end / finish flags
+      // start / resume / day-end / finish flags
       const outbound = !route.reversedFrom && route.id === 'out';
-      const start = pointAtMile(route, 0);
-      L.marker(start, { icon: flagIcon(outbound ? 'START' : 'BASE CAMP'), zIndexOffset: 900 }).addTo(flags);
+      if (fromMile > 0) {
+        L.marker(pointAtMile(route, fromMile), { icon: flagIcon(`RESUME · mi ${Math.round(fromMile)}`), zIndexOffset: 900 }).addTo(flags);
+      } else {
+        L.marker(pointAtMile(route, 0), { icon: flagIcon(outbound ? 'START' : 'BASE CAMP'), zIndexOffset: 900 }).addTo(flags);
+      }
       plan.days.forEach((day, i) => {
         if (day.endMile >= route.cum[route.cum.length - 1] - 1e-6) return;
         const p = pointAtMile(route, day.endMile);
         const mp = mileToBrpMp(route, day.endMile);
-        L.marker(p, { icon: flagIcon(`D${i + 1} NIGHT${mp != null ? ` · MP ${Math.round(mp)}` : ''}`), zIndexOffset: 900 }).addTo(flags);
+        L.marker(p, { icon: flagIcon(`D${day.tripDay ?? (i + 1)} NIGHT${mp != null ? ` · MP ${Math.round(mp)}` : ''}`), zIndexOffset: 900 }).addTo(flags);
       });
       const end = pointAtMile(route, route.cum[route.cum.length - 1]);
       L.marker(end, { icon: flagIcon(outbound ? 'BASE CAMP 🐉' : 'HOME'), zIndexOffset: 900 }).addTo(flags);

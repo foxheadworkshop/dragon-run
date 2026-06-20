@@ -5,7 +5,7 @@ const LS_KEY = 'dragon-run-v1';
 // The group's planned departure. Stored snapshots older than CFG_V are migrated
 // onto this date so everyone's app moves together when the plan changes.
 const TRIP_START = '2026-06-19';
-const CFG_V = 3; // bumped for roster/staging (v2→v3)
+const CFG_V = 4; // v3→v4: added state.progress (group resume anchor)
 
 export const DEFAULTS = {
   cfg: {
@@ -50,6 +50,7 @@ export function createStore() {
     // durable additions:
     roster: Array.isArray(saved?.roster) ? saved.roster : [],   // [{uid,name,bike,tankRangeMi,color,rsvp}]
     staging: saved?.staging || null,                            // {label, lat?, lon?, time?}
+    progress: normalizeProgress(saved?.progress),               // {fromMile, completedDays[], startedAt} | null — group resume anchor
     expenses: normalizeExpenses(saved?.expenses),               // {id: Expense} — persisted only in local mode
     // volatile (not persisted):
     votes: {},   // poiId -> { count, mine, names[] }
@@ -70,8 +71,11 @@ export function createStore() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       try {
-        const { cfg, toggles, picks, rider, tripId, roster, staging, expenses, syncMode } = state;
-        const base = { v: CFG_V, cfg, toggles, picks, rider, tripId, roster, staging };
+        const { cfg, toggles, picks, rider, tripId, roster, staging, progress, expenses, syncMode } = state;
+        // progress persists in ALL modes: it's the group's last-known position and SHOULD
+        // survive an offline reload at Deals Gap, then yield to the remote snapshot when it
+        // arrives. (Expenses, by contrast, are excluded in firebase mode below.)
+        const base = { v: CFG_V, cfg, toggles, picks, rider, tripId, roster, staging, progress };
         // Expenses live in Firestore when synced; only persist them locally in treasurer mode
         // so a Firebase trip doesn't carry a stale copy that fights the live snapshot.
         if (syncMode !== 'firebase') base.expenses = expenses;
@@ -133,6 +137,24 @@ export function normalizeExpenses(raw) {
     }
   }
   return out;
+}
+
+// Sanitize a saved/synced progress anchor. Returns null (no progress) for junk.
+// Shape: { fromMile, completedDays:[{dayNum,endMile,label,lat,lon,dateISO}], startedAt }.
+export function normalizeProgress(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const fromMile = Number(raw.fromMile);
+  if (!Number.isFinite(fromMile) || fromMile < 0) return null;
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+  const days = Array.isArray(raw.completedDays) ? raw.completedDays : [];
+  const completedDays = days.map((d, i) => ({
+    dayNum: Number.isFinite(Number(d?.dayNum)) ? Math.max(1, Math.round(Number(d.dayNum))) : i + 1,
+    endMile: Number.isFinite(Number(d?.endMile)) ? Number(d.endMile) : fromMile,
+    label: String(d?.label || '').slice(0, 80),
+    lat: num(d?.lat), lon: num(d?.lon),
+    dateISO: /^\d{4}-\d{2}-\d{2}$/.test(d?.dateISO || '') ? d.dateISO : null,
+  })).filter((d) => d.endMile >= 0).slice(0, 14);
+  return { fromMile, completedDays, startedAt: Number(raw.startedAt) || Date.now() };
 }
 
 // Ensure the local rider has a roster entry (so they appear and their bike counts).

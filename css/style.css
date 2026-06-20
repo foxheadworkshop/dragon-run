@@ -987,6 +987,16 @@ dialog menu { display: flex; justify-content: flex-end; margin: 14px 0 0; paddin
 .roster-body .staging .stg-label { width: 150px; }
 #rd-add { margin-top: 8px; }
 
+/* trip progress (resume anchor) card inside the roster */
+.progress-block { margin: 4px 0 12px; padding: 9px 11px; border: 1px solid var(--amber-deep); border-radius: 10px; background: rgb(240 140 0 / .07); }
+.progress-block .pb-head { font-weight: 700; font-size: 13px; color: var(--ink); margin-bottom: 4px; }
+.progress-block .pb-now { font-size: 12px; color: var(--ink-dim); line-height: 1.4; }
+.progress-block .pb-log { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0 2px; }
+.progress-block .pb-day { font-size: 11px; color: var(--ink-faint); background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; }
+.progress-block .pb-actions { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 9px; }
+.btn.ghost { background: none; border-color: var(--line); color: var(--ink-dim); }
+.btn.ghost:hover { border-color: var(--ember, #ff5d3b); color: var(--ink); }
+
 /* ---------- trip costs ---------- */
 
 .costs-panel { display: block; }

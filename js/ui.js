@@ -152,6 +152,9 @@ export function createUI(cb) {
     if (rsvp) { cb.onRiderRsvp(rsvp.closest('[data-uid]').dataset.uid, rsvp.dataset.rsvp); return; }
     const pin = e.target.closest('#stg-pin');
     if (pin) { cb.onStagingPin(); return; }
+    if (e.target.closest('#pg-here')) { cb.onProgressStartHere(); return; }
+    if (e.target.closest('#pg-stop')) { cb.onProgressMarkStop(); return; }
+    if (e.target.closest('#pg-clear')) { cb.onProgressClear(); return; }
   });
   els.rosterPanel.addEventListener('change', (e) => {
     const t = e.target;
@@ -365,7 +368,7 @@ export function createUI(cb) {
     const color = DAY_COLORS[i % DAY_COLORS.length];
     const head = `
       <div class="day-head">
-        <div class="day-title"><span class="day-color" style="background:${color}"></span>Day ${i + 1} <span style="color:var(--ink-faint)">· ${dateStr}</span></div>
+        <div class="day-title"><span class="day-color" style="background:${color}"></span>Day ${day.tripDay ?? (i + 1)} <span style="color:var(--ink-faint)">· ${dateStr}</span></div>
         <div class="day-meta">${Math.round(day.miles)} mi · ${day.ridingHrs.toFixed(1)} h saddle<br>
         ${minToTime(day.departMin)} → ~${minToTime(day.arriveMin)}</div>
       </div>`;
@@ -510,6 +513,34 @@ export function createUI(cb) {
   // ---- riders & bikes ----
   const rsvpRank = (r) => ({ in: 0, maybe: 1, out: 2 }[r.rsvp] ?? 0);
 
+  // Trip-progress card (outbound only): start/continue from your location, log last night's
+  // stop, and see the remaining-day renumbering. Renders inside the roster section.
+  function progressBlock(ctx) {
+    const { state, progress, fromMp, plan, dayBase } = ctx;
+    if (state.dir !== 'out') return ''; // progress is outbound-only
+    if (!progress) {
+      return `<div class="progress-block">
+        <div class="pb-head">Trip progress</div>
+        <div class="pb-now">Riding now? Pin where you are to replan the rest of the trip from there — remaining miles, days, fuel and ETAs all shift.</div>
+        <div class="pb-actions"><button id="pg-here" class="btn btn-small">Start today from my location</button></div>
+      </div>`;
+    }
+    const dayNum = (dayBase || 0) + 1;
+    const where = fromMp != null ? `MP ${Math.round(fromMp)}` : `mile ${Math.round(progress.fromMile)}`;
+    const log = (progress.completedDays || []).map((d) =>
+      `<span class="pb-day">Day ${d.dayNum}: ${d.label ? esc(d.label) : `mi ${Math.round(d.endMile)}`}</span>`).join('');
+    return `<div class="progress-block">
+      <div class="pb-head">📍 Day ${dayNum} · resuming near ${where}</div>
+      <div class="pb-now">${Math.round(plan.totals.miles)} mi to go · plan assumes a full tank at the resume point</div>
+      ${log ? `<div class="pb-log">${log}</div>` : ''}
+      <div class="pb-actions">
+        <button id="pg-here" class="btn btn-small">Update to my location</button>
+        <button id="pg-stop" class="btn btn-small">Log last night's stop</button>
+        <button id="pg-clear" class="btn btn-small ghost">Reset</button>
+      </div>
+    </div>`;
+  }
+
   function renderRoster(ctx) {
     const { state, fuelBike } = ctx;
     // don't stomp an input the user is editing
@@ -535,7 +566,7 @@ export function createUI(cb) {
         ${isSelf ? '<span class="you-tag">you</span>' : `<button class="rd-del" data-uid="${esc(r.uid)}" title="Remove">×</button>`}
       </div>`;
     }).join('');
-    const body = `<div class="roster-body">${rows}
+    const body = `<div class="roster-body">${progressBlock(ctx)}${rows}
       <button id="rd-add" class="btn btn-small">+ Add a bike</button>
       <div class="staging">
         <label>Meetup <input class="stg-label" value="${esc(stg.label || '')}" placeholder="QuikTrip on Plank Rd"></label>
@@ -662,7 +693,7 @@ export function createUI(cb) {
         <span class="nm">${tier}${esc(c.poi.name || CAT_LABEL[c.poi.cat])}</span>
         <span class="meta">${c.o.toFixed(1)} mi off</span>
         <button class="mini ${v?.mine ? 'active' : ''}" data-vote="${id}" title="${esc((v?.names || []).join(', '))}">👍${v?.count ? ' ' + v.count : ''}</button>
-        <button class="mini ${picked ? 'active' : ''}" data-pick="${id}" data-kind="${kind}" data-daykey="${day.idx}">${picked ? 'Picked' : 'Pick'}</button>
+        <button class="mini ${picked ? 'active' : ''}" data-pick="${id}" data-kind="${kind}" data-daykey="${day.absIdx ?? day.idx}">${picked ? 'Picked' : 'Pick'}</button>
       </div>`;
   }
 

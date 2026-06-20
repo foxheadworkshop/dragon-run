@@ -40,6 +40,7 @@ export function createUI(cb) {
     warnings: $('#warnings'),
     toggles: $('#toggles'),
     itinerary: $('#itinerary'),
+    aheadPanel: $('#aheadPanel'),
     ridesPanel: $('#ridesPanel'),
     sightsPanel: $('#sightsPanel'),
     rosterPanel: $('#rosterPanel'),
@@ -59,7 +60,7 @@ export function createUI(cb) {
 
   let dragging = null;            // slider key being dragged
   const expanded = new Set();     // alternates lists left open across re-renders
-  let costsMounted = false, rosterMounted = false;
+  let costsMounted = false, rosterMounted = false, aheadMounted = false;
   let pwa = null;                 // set by app via setPwa() once the SW glue is ready
 
   // ---- events ----
@@ -112,6 +113,13 @@ export function createUI(cb) {
     if (alt) { cb.onFocusPoi(alt.dataset.poi); return; }
     const stop = e.target.closest('.stop');
     if (stop) cb.onFocusStop(Number(stop.dataset.mile), stop.dataset.poi || null);
+  });
+
+  els.aheadPanel.addEventListener('click', (e) => {
+    if (e.target.closest('#ah-locate')) { cb.onAheadLocate(); return; }
+    if (e.target.closest('#ah-refresh')) { cb.onAheadRefresh(); return; }
+    const item = e.target.closest('.ah-item');
+    if (item) cb.onFocusPoi(item.dataset.poi);
   });
 
   els.ridesPanel.addEventListener('click', (e) => {
@@ -400,6 +408,58 @@ export function createUI(cb) {
   }
   function setSightsVisible(on) { els.sightsPanel.hidden = !on; }
 
+  // ---- "ride ahead" panel ----
+  // info: null / { tracking } when idle, or { tracking, min, mp, targetMile,
+  // etaText, offRoute, atEnd, results:[{poi,m,o,tier,dAhead}] } when located.
+  function renderAhead(info) {
+    if (!els.aheadPanel) return;
+    let note, body;
+    if (!info || !info.tracking) {
+      note = 'find your spot';
+      body = `<div class="ah-empty">Tap the <span class="ah-cross">⌖</span> locate button on the map — then I'll show gas, food &amp; hotels about an hour up the route from where you are, matching your Map layers. <button class="btn btn-small" id="ah-locate">Locate me</button></div>`;
+    } else if (!info.results) {
+      note = info.offRoute ? 'off route' : 'locating…';
+      body = `<div class="ah-empty">${esc(info.note || 'Looking for your spot on the route…')}</div>`;
+    } else {
+      const where = info.mp != null ? `MP ${Math.round(info.mp)}` : `mile ${Math.round(info.targetMile)}`;
+      note = `~${fmtDurMin(info.min)} ahead`;
+      const callout = info.offRoute
+        ? `<div class="ah-callout">⚠ You're ~${info.offMi} mi off the route line — this assumes you rejoin it. Check the right direction (Outbound / Return) is selected.</div>`
+        : '';
+      const flags = info.atEnd ? ' · end of route' : '';
+      const head = `<div class="ah-head">In <b>~${fmtDurMin(info.min)}</b> you'll be near <b>${where}</b>${info.etaText ? ` · ~${esc(info.etaText)}` : ''}${flags}</div>`;
+      const list = info.results.length
+        ? `<div class="ah-list">${info.results.map(aheadItem).join('')}</div>`
+        : `<div class="ah-empty">No matching stops within ~30 min of that spot — try <b>+</b> on the map, or pull fresh data.</div>`;
+      body = `${callout}${head}${list}<button class="btn btn-small" id="ah-refresh">Pull fresh places here</button>`;
+    }
+    if (!aheadMounted) {
+      els.aheadPanel.innerHTML = `<details class="collapse" id="cd-ahead" open><summary>📍 Ride ahead <span class="count">${note}</span></summary><div class="ahead-body">${body}</div></details>`;
+      wireCollapse(document.getElementById('cd-ahead'));
+      aheadMounted = true;
+    } else {
+      const cn = els.aheadPanel.querySelector('#cd-ahead > summary .count');
+      if (cn) cn.textContent = note;
+      const bodyEl = els.aheadPanel.querySelector('.ahead-body');
+      if (bodyEl) bodyEl.innerHTML = body;
+    }
+  }
+
+  function aheadItem(e) {
+    const cat = e.poi.cat;
+    const glyph = GLYPHS[cat] ? GLYPHS[cat].replace('#16130c', catColor(cat)) : '';
+    const tier = e.tier ? `<span class="tier">${TIER_LABEL[e.tier]}</span> ` : '';
+    const off = e.o > 0.15 ? ` · ${e.o.toFixed(1)} mi off` : '';
+    const ahead = e.dAhead == null ? ''
+      : Math.abs(e.dAhead) < 0.5 ? 'right there'
+      : e.dAhead >= 0 ? `${Math.round(e.dAhead)} mi past` : `${Math.round(-e.dAhead)} mi before`;
+    return `<button class="ah-item" data-poi="${esc(e.poi.id)}" title="Show on the map">
+      <span class="ah-glyph">${glyph}</span>
+      <span class="ah-name">${tier}${esc(e.poi.name || CAT_LABEL[cat])}</span>
+      <span class="ah-meta">${esc(CAT_LABEL[cat])}${ahead ? ' · ' + ahead : ''}${off}</span>
+    </button>`;
+  }
+
   function setPwa(p) { pwa = p; }
 
   function renderOffline(ctx) {
@@ -587,7 +647,15 @@ export function createUI(cb) {
     });
   }
 
-  return { render, mountRides, setRidesVisible, mountSights, setSightsVisible, setPwa, askName, isDragging: () => dragging !== null };
+  return { render, renderAhead, mountRides, setRidesVisible, mountSights, setSightsVisible, setPwa, askName, isDragging: () => dragging !== null };
+}
+
+// "45 min" / "1 h" / "1 h 30 min" from a minute count.
+function fmtDurMin(min) {
+  min = Math.round(min || 0);
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60), m = min % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
 }
 
 // Remember whether a <details class="collapse"> is open across reloads.

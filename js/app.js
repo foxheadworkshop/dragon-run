@@ -9,6 +9,7 @@ import { computePlan, classifyPoiSlot, minToTime } from './engine.js';
 import { rosterFor, computeBalances, simplifyDebts } from './split.js';
 import { createMap } from './map.js';
 import { createUI, showToast } from './ui.js';
+import { createLocator } from './locate.js';
 import { createSync } from './sync.js';
 import { encodeStateHash, decodeHash } from './share.js';
 import { buildGpx, downloadGpx } from './gpx.js';
@@ -17,7 +18,7 @@ import { sunTimes } from './sun.js';
 import { dayWeather } from './weather.js';
 import { initPwa } from './pwa.js';
 
-const DATA_V = '2026-06-17-4'; // bumped on data redeploys to bust the Pages CDN cache
+const DATA_V = '2026-06-19-1'; // bumped on data redeploys to bust the Pages CDN cache
 const HIGH_FT = 4500;          // elevation that triggers the cold/fog "pack layers" warning
 
 boot().catch((e) => {
@@ -84,7 +85,141 @@ async function boot() {
     },
     ridePopupHtml: (ride) => ridePopupHtml(ride),
     sightPopupHtml: (s) => sightPopupHtml(s),
+    onLocate: () => onLocate(),
+    onAheadStep: (dir) => stepAhead(dir),
+    onAheadFocus: () => { if (loc.point) mapApi.focusAhead(loc.point); },
+    onMapDrag: () => {
+      // A manual pan opts out of follow — including during acquisition, so the first
+      // fix doesn't yank the viewport back to the dot.
+      if (loc.state === 'follow') { loc.state = 'on'; loc.follow = false; mapApi.setLocateState('on'); }
+      else if (loc.state === 'locating') { loc.follow = false; }
+    },
   });
+
+  // ---------- live location & "ride ahead" ----------
+  // All ephemeral (never persisted/synced): a GPS fix, the locate button's state,
+  // the projected forward point, and the chosen look-ahead duration.
+  const AHEAD_STEPS = [30, 45, 60, 90, 120]; // minutes
+  const LOC_ERR = {
+    denied: 'Location permission denied — enable it in your browser to see yourself.',
+    unavailable: "Couldn't get a location fix — no GPS signal?",
+    timeout: 'Location is taking a while — still trying…',
+    unsupported: "This device can't share its location.",
+    insecure: 'Live location needs the https site (it won\'t work opening the file directly).',
+  };
+  const loc = { fix: null, state: 'off', follow: false, min: 60, point: null, targetMile: null, errToast: false };
+
+  const locator = createLocator({
+    onUpdate(fix) {
+      loc.fix = fix;
+      mapApi.setUserLocation(fix, { follow: loc.follow });
+      if (loc.state === 'locating') loc.state = loc.follow ? 'follow' : 'on';
+      mapApi.setLocateState(loc.state);
+      updateAhead();
+    },
+    onError(e) {
+      // PERMISSION_DENIED (and unsupported/insecure) are permanent — tear the watch down
+      // so a later tap starts a fresh one instead of hitting watchPosition's no-op guard.
+      // POSITION_UNAVAILABLE / TIMEOUT can be transient: keep the watch alive (it may still
+      // deliver a fix) and keep the button in 'locating' so a second tap cancels it cleanly.
+      if (e.code === 'denied' || e.code === 'unsupported' || e.code === 'insecure') resetLocate();
+      if (e.code !== 'timeout' && !loc.errToast) { showToast(LOC_ERR[e.code] || 'Location unavailable'); loc.errToast = true; }
+    },
+  });
+
+  // Full teardown: stop the watch and reset all locate/ahead state + UI.
+  function resetLocate() {
+    locator.stop();
+    loc.fix = null; loc.follow = false; loc.state = 'off'; loc.point = null; loc.targetMile = null;
+    mapApi.setLocateState('off');
+    mapApi.clearUserLocation();
+    mapApi.setAhead({ visible: false });
+    ui.renderAhead(null);
+  }
+
+  function onLocate() {
+    if (loc.state === 'off') {
+      loc.follow = true; loc.state = 'locating'; loc.errToast = false;
+      mapApi.setLocateState('locating');
+      showToast('Finding you…');
+      if (!locator.start()) { loc.state = 'off'; mapApi.setLocateState('off'); }
+    } else if (loc.state === 'follow') {
+      loc.follow = false; loc.state = 'on'; mapApi.setLocateState('on'); // stop chasing, keep the dot
+    } else { // 'on' or 'locating' → turn off
+      resetLocate();
+    }
+  }
+
+  function stepAhead(dir) {
+    let i = AHEAD_STEPS.indexOf(loc.min);
+    if (i < 0) i = 2;
+    loc.min = AHEAD_STEPS[Math.max(0, Math.min(AHEAD_STEPS.length - 1, i + dir))];
+    updateAhead();
+  }
+
+  // Project the GPS fix onto the active route, ride forward avgMph × duration, and
+  // gather the nearest stops (in the toggled-on categories) around that point.
+  function updateAhead() {
+    if (loc.state === 'off' || !loc.fix || !current.route) { loc.point = null; ui.renderAhead(null); return; }
+    const { route, rk, idx } = current;
+    const total = route.cum[route.cum.length - 1];
+    // On-route fixes snap within a mile or two; allow up to 20 mi (a parallel road /
+    // a fuel detour into town) and still project. Beyond that, treat as "not near this
+    // route" — most likely the wrong direction tab is selected.
+    const pr = projectToRoute(gridFor(rk), route.cum, loc.fix.lat, loc.fix.lon, 8)
+      || projectToRoute(gridFor(rk), route.cum, loc.fix.lat, loc.fix.lon, 20);
+    if (!pr) {
+      loc.point = null;
+      mapApi.setAhead({ visible: false, minutes: loc.min, note: 'not near route' });
+      ui.renderAhead({ tracking: true, min: loc.min, offRoute: true, note: "You're not near the planned route — make sure the right direction (Outbound / Return) is selected, or get closer." });
+      return;
+    }
+    const offRoute = pr.offMi > 8;
+    const distAhead = (S.cfg.avgMph || 45) * (loc.min / 60);
+    const targetMile = Math.min(total, pr.mile + distAhead);
+    const point = pointAtMile(route, targetMile);
+    loc.point = point; loc.targetMile = targetMile;
+
+    // window: ±30 min of riding around the projected point (min 10 mi)
+    const W = Math.max(10, (S.cfg.avgMph || 45) * 0.5);
+    const cats = CATS.filter((c) => S.toggles[c]); // fuel / food / lodging / camping
+    const tierOk = (e) => e.poi.cat !== 'lodging' || !S.cfg.maxTier || !e.tier || e.tier <= S.cfg.maxTier;
+    const found = [];
+    for (const c of cats) {
+      for (const e of idx.byCat[c] || []) {
+        if (e.m < targetMile - W || e.m > targetMile + W) continue;
+        if (!tierOk(e)) continue;
+        found.push({ e, d: e.m - targetMile });
+      }
+    }
+    found.sort((a, b) => Math.abs(a.d) - Math.abs(b.d));
+    const results = found.slice(0, 12).map((r) => ({ ...r.e, dAhead: r.d }));
+
+    const mp = mileToBrpMp(route, targetMile);
+    const now = new Date();
+    const etaText = minToTime(now.getHours() * 60 + now.getMinutes() + loc.min);
+    const atEnd = targetMile >= total - 0.5;
+
+    mapApi.setAhead({ visible: true, minutes: loc.min, point, mp, targetMile, count: results.length, offRoute });
+    ui.renderAhead({
+      tracking: true, min: loc.min, mp, targetMile, etaText, offRoute, offMi: Math.round(pr.offMi), atEnd,
+      fromMile: pr.mile, results,
+    });
+  }
+
+  async function refreshAhead() {
+    if (loc.targetMile == null) return;
+    showToast('Pulling fresh places near that spot…');
+    try {
+      const n = await refreshFromOverpass(poiSet, [routes.out, routes.retFast], current.route, loc.targetMile);
+      idxCache = new Map();
+      recompute({ markers: true }); // re-renders markers and re-runs updateAhead()
+      showToast(n ? `${n} new place${n > 1 ? 's' : ''} added near your route ahead` : 'No new places found there');
+    } catch (e) {
+      console.warn(e);
+      showToast('Overpass is busy — try again in a minute');
+    }
+  }
 
   function sightPopupHtml(s) {
     const t = s.tags || {};
@@ -190,6 +325,7 @@ async function boot() {
     if (markers || routeChanged) mapApi.setMarkers(visibleEntries(idx));
     ui.render({ state: S, route, plan, dateOffsets, rides, effFuel, fuelSource, fuelBike, costs: costView() });
     scheduleWeather(rk, route, plan);
+    if (loc.state !== 'off' && loc.fix) updateAhead(); // keep the projection in step with route/toggle changes
   }
 
   // The settle-up view for the cost panel (recomputed each render).
@@ -491,6 +627,8 @@ async function boot() {
       commitExpense({ ...e, sharers, updatedAt: Date.now() });
     },
     onDeleteExpense(id) { removeExpense(id); },
+    onAheadLocate() { onLocate(); },
+    onAheadRefresh() { void refreshAhead(); },
     onRerender() { recompute(); },
     async onShare() {
       if (sync && sync.mode !== 'local') {
@@ -614,6 +752,7 @@ async function boot() {
   ui.setRidesVisible(S.toggles.rides);
   ui.mountSights(panelSights);
   ui.setSightsVisible(S.toggles.sights);
+  ui.renderAhead(null); // mount the "Ride ahead" section with its locate CTA
   recompute({ markers: true });
   if (S.toggles.radar) mapApi.setRadar(true);
   await initSync();

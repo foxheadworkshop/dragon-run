@@ -34,6 +34,8 @@ export function createMap(el, handlers) {
   const staging = L.layerGroup().addTo(map);
   const chosenLayer = L.layerGroup().addTo(map);
   const highlight = L.layerGroup().addTo(map);
+  const meLayer = L.layerGroup().addTo(map);    // live GPS location
+  const aheadLayer = L.layerGroup().addTo(map);  // "ride ahead" projected point
   const cluster = L.markerClusterGroup({
     maxClusterRadius: 44,
     disableClusteringAtZoom: 12,
@@ -52,8 +54,30 @@ export function createMap(el, handlers) {
   const rideRefs = new Map(); // id -> { line, casing, marker }
   const sightRefs = new Map(); // id -> marker
   let pointPicker = null;
+  let userDot = null, userAcc = null;       // live-location marker + accuracy circle
+  let locateBtn = null, aheadCtl = null;    // on-map control elements
 
   const MOTO_GLYPH = '<svg viewBox="0 0 24 24" fill="#16130c"><path d="M19.44 9.03 15.41 5H11v2h3.59l2 2H5c-2.8 0-5 2.2-5 5s2.2 5 5 5c2.46 0 4.45-1.69 4.9-4h1.65l2.77-2.77c-.21.54-.32 1.14-.32 1.77 0 2.8 2.2 5 5 5s5-2.2 5-5c0-2.65-1.97-4.77-4.56-4.97zM7.82 15C7.4 16.15 6.28 17 5 17c-1.65 0-3-1.35-3-3s1.35-3 3-3c1.28 0 2.4.85 2.82 2H5v2h2.82zM19 17c-1.65 0-3-1.35-3-3s1.35-3 3-3 3 1.35 3 3-1.35 3-3 3z"/></svg>';
+  const CROSSHAIR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke-linecap="round"/></svg>';
+
+  // "1h" / "45m" / "1h30" from a minute count.
+  function fmtDur(min) {
+    min = Math.round(min || 0);
+    if (min < 60) return `${min}m`;
+    const h = Math.floor(min / 60), m = min % 60;
+    return m ? `${h}h${m}` : `${h}h`;
+  }
+
+  function meIcon() {
+    return L.divIcon({ className: 'me-pin', html: '<div class="me-dot"></div>', iconSize: [22, 22], iconAnchor: [11, 11] });
+  }
+
+  const LOC_LABELS = {
+    off: 'Show my location',
+    locating: 'Finding your location…',
+    follow: 'Following your location — tap to stop centering',
+    on: 'Tracking your location — tap to turn off',
+  };
 
   // NEXRAD composite frames: 50 min of history in 10-min steps, then current ('').
   // IEM serves time-lagged layers as nexrad-n0q-900913-mNNm (free, no key).
@@ -129,6 +153,43 @@ export function createMap(el, handlers) {
       iconSize: [24, 24], iconAnchor: [12, 22], popupAnchor: [0, -20],
     });
   }
+
+  // ---- locate + "ride ahead" on-map controls ----
+  const locateControl = L.control({ position: 'topleft' });
+  locateControl.onAdd = () => {
+    const div = L.DomUtil.create('div', 'leaflet-bar locate-ctl');
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.disableScrollPropagation(div);
+    div.innerHTML = `<button class="loc-btn loc-off" title="Show my location" aria-label="Show my location">${CROSSHAIR}</button>`;
+    locateBtn = div.querySelector('.loc-btn');
+    locateBtn.addEventListener('click', () => handlers.onLocate?.());
+    return div;
+  };
+  locateControl.addTo(map);
+
+  const aheadControl = L.control({ position: 'topleft' });
+  aheadControl.onAdd = () => {
+    const div = L.DomUtil.create('div', 'ahead-ctl hidden');
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.disableScrollPropagation(div);
+    div.innerHTML =
+      `<div class="ah-row"><span class="ah-lbl">Ride ahead</span>` +
+      `<button class="ah-step" data-dir="-1" title="Less time" aria-label="Less time">−</button>` +
+      `<span class="ah-dur">1h</span>` +
+      `<button class="ah-step" data-dir="1" title="More time" aria-label="More time">+</button></div>` +
+      `<button class="ah-read" aria-live="polite" title="Fly to that spot on the route">tap ⌖ to locate</button>`;
+    div.addEventListener('click', (e) => {
+      const step = e.target.closest('.ah-step');
+      if (step) { handlers.onAheadStep?.(Number(step.dataset.dir)); return; }
+      if (e.target.closest('.ah-read')) handlers.onAheadFocus?.();
+    });
+    aheadCtl = div;
+    return div;
+  };
+  aheadControl.addTo(map);
+
+  // Panning the map by hand drops "follow" mode (so the view stops chasing the dot).
+  map.on('dragstart', () => handlers.onMapDrag?.());
 
   return {
     map,
@@ -381,6 +442,65 @@ export function createMap(el, handlers) {
       pointPicker = (e) => { el.style.cursor = ''; map.off('click', pointPicker); pointPicker = null; cb(e.latlng); };
       map.once('click', pointPicker);
     },
+
+    // ---- live location ----
+    // state: 'off' | 'locating' | 'follow' | 'on'. Drives the locate button look
+    // and shows/hides the ride-ahead control.
+    setLocateState(state) {
+      if (locateBtn) {
+        locateBtn.classList.remove('loc-off', 'loc-locating', 'loc-follow', 'loc-on');
+        locateBtn.classList.add('loc-' + state);
+        locateBtn.setAttribute('aria-pressed', state === 'off' ? 'false' : 'true');
+        locateBtn.setAttribute('aria-label', LOC_LABELS[state] || LOC_LABELS.off);
+        locateBtn.title = LOC_LABELS[state] || LOC_LABELS.off;
+      }
+      const tracking = state === 'follow' || state === 'on';
+      aheadCtl?.classList.toggle('hidden', !tracking);
+    },
+
+    setUserLocation({ lat, lon, accuracy }, { follow = false } = {}) {
+      const ll = [lat, lon];
+      if (!userDot) {
+        userAcc = L.circle(ll, {
+          radius: accuracy || 0, color: '#5fa8ff', weight: 1, opacity: 0.5,
+          fillColor: '#5fa8ff', fillOpacity: 0.12, interactive: false,
+        }).addTo(meLayer);
+        userDot = L.marker(ll, { icon: meIcon(), zIndexOffset: 1300, interactive: false }).addTo(meLayer);
+      } else {
+        userDot.setLatLng(ll);
+        userAcc.setLatLng(ll).setRadius(accuracy || 0);
+      }
+      if (follow) map.setView(ll, Math.max(map.getZoom() || 0, 12), { animate: true });
+    },
+
+    clearUserLocation() { meLayer.clearLayers(); userDot = null; userAcc = null; },
+
+    // ---- "ride ahead" projected point ----
+    // info: { visible, minutes, point:[lat,lon], mp, targetMile, count, offRoute, note }
+    setAhead(info) {
+      aheadLayer.clearLayers();
+      if (aheadCtl) {
+        const durEl = aheadCtl.querySelector('.ah-dur');
+        if (durEl && info?.minutes != null) durEl.textContent = fmtDur(info.minutes);
+        const read = aheadCtl.querySelector('.ah-read');
+        if (read) {
+          read.textContent = info?.visible
+            ? `${info.mp != null ? 'MP ' + Math.round(info.mp) : 'mi ' + Math.round(info.targetMile)}` +
+              ` · ${info.count} stop${info.count === 1 ? '' : 's'}${info.offRoute ? ' · off route' : ''}`
+            : (info?.note || 'project ahead');
+        }
+      }
+      if (!info?.visible || !info.point) return;
+      L.circleMarker(info.point, {
+        radius: 11, color: '#5fa8ff', weight: 3, fillColor: '#5fa8ff', fillOpacity: 0.15, interactive: false,
+      }).addTo(aheadLayer);
+      L.marker(info.point, {
+        icon: L.divIcon({ className: 'ahead-flag', html: `<div class="ahf">~${fmtDur(info.minutes)} ahead</div>`, iconSize: null, iconAnchor: [0, -8] }),
+        interactive: false, zIndexOffset: 1250,
+      }).addTo(aheadLayer);
+    },
+
+    focusAhead(point) { if (point) map.setView(point, Math.max(map.getZoom() || 0, 11), { animate: true }); },
 
     invalidate() { setTimeout(() => map.invalidateSize(), 260); },
   };
